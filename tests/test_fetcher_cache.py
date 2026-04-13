@@ -95,6 +95,14 @@ def test_has_cached_coverage_rejects_null_only_rows(tmp_path):
     conn.close()
 
 
+def test_has_cached_coverage_rejects_partial_ranges(tmp_path):
+    db_path = tmp_path / "raw_cache.db"
+    conn = init_db(db_path)
+    save_price_history(conn, _sample_prices().iloc[:1].copy())
+    assert has_cached_coverage(conn, ["AAPL"], "2026-04-01", "2026-04-03") is False
+    conn.close()
+
+
 def test_fetch_data_downloads_when_cache_contains_only_null_rows(tmp_path, monkeypatch):
     db_path = tmp_path / "raw_cache.db"
     conn = init_db(db_path)
@@ -120,6 +128,32 @@ def test_fetch_data_downloads_when_cache_contains_only_null_rows(tmp_path, monke
     assert called["downloaded"] is True
     assert len(out) == 2
     assert out["Close"].notna().all()
+
+
+def test_fetch_data_downloads_when_cache_has_partial_range_for_ticker(tmp_path, monkeypatch):
+    db_path = tmp_path / "raw_cache.db"
+    conn = init_db(db_path)
+    save_price_history(conn, _sample_prices().iloc[:1].copy())
+    conn.close()
+
+    seen = {"tickers": None}
+
+    def _mock_download(tickers, *_args, **_kwargs):
+        seen["tickers"] = list(tickers)
+        return _sample_prices().copy(), []
+
+    monkeypatch.setattr("fetcher._download_all_batches", _mock_download)
+
+    out = fetch_data(
+        tickers=["AAPL"],
+        low_start="2026-04-01",
+        end_date="2026-04-03",
+        cache_dir=tmp_path,
+        refresh=False,
+    )
+
+    assert seen["tickers"] == ["AAPL"]
+    assert list(out["Date"].dt.strftime("%Y-%m-%d")) == ["2026-04-01", "2026-04-02"]
 
 
 def test_fetch_data_skips_known_invalid_tickers_before_download(tmp_path, monkeypatch):

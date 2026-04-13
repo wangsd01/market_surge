@@ -17,6 +17,7 @@ from db import (
     delete_invalid_tickers,
     get_cached_price_history,
     get_invalid_tickers,
+    get_tickers_with_cached_coverage,
     get_ticker_metadata as get_cached_ticker_metadata,
     init_db,
     save_invalid_tickers,
@@ -359,8 +360,8 @@ def fetch_data(
         ]
         if not refresh:
             cached = get_cached_price_history(conn, ticker_list, low_start, end_date)
-            cached_tickers = set(cached["Ticker"].unique()) if not cached.empty and "Ticker" in cached.columns else set()
-            missing = [ticker for ticker in ticker_list if ticker not in cached_tickers]
+            covered_tickers = get_tickers_with_cached_coverage(conn, ticker_list, low_start, end_date)
+            missing = [ticker for ticker in ticker_list if ticker not in covered_tickers]
             if not missing:
                 return cached
         else:

@@ -272,6 +272,52 @@ def get_cached_price_history(
     return df
 
 
+def _expected_cache_dates(low_start: str, end_date: str) -> set[str]:
+    start_ts = pd.to_datetime(low_start)
+    end_ts = pd.to_datetime(end_date)
+    if end_ts <= start_ts:
+        return set()
+    dates = pd.bdate_range(start=start_ts, end=end_ts - pd.Timedelta(days=1))
+    return {ts.date().isoformat() for ts in dates}
+
+
+def get_tickers_with_cached_coverage(
+    conn: sqlite3.Connection,
+    tickers: list[str],
+    low_start: str,
+    end_date: str,
+) -> set[str]:
+    if not tickers:
+        return set()
+
+    expected_dates = _expected_cache_dates(low_start, end_date)
+    if not expected_dates:
+        return set(tickers)
+
+    placeholders = ",".join("?" for _ in tickers)
+    params: list[Any] = [*tickers, low_start, end_date]
+    query = f"""
+        SELECT ticker, date
+        FROM raw_price_history
+        WHERE ticker IN ({placeholders})
+          AND date >= ?
+          AND date < ?
+          AND low IS NOT NULL
+          AND close IS NOT NULL
+          AND volume IS NOT NULL
+    """
+    rows = conn.execute(query, params).fetchall()
+
+    dates_by_ticker: dict[str, set[str]] = {}
+    for ticker, date_value in rows:
+        norm_ticker = str(ticker).upper()
+        dates_by_ticker.setdefault(norm_ticker, set()).add(str(date_value))
+
+    return {
+        ticker for ticker in tickers if expected_dates.issubset(dates_by_ticker.get(str(ticker).upper(), set()))
+    }
+
+
 def has_cached_coverage(
     conn: sqlite3.Connection,
     tickers: list[str],
@@ -280,23 +326,7 @@ def has_cached_coverage(
 ) -> bool:
     if not tickers:
         return True
-
-    placeholders = ",".join("?" for _ in tickers)
-    params: list[Any] = [*tickers, low_start, end_date]
-    query = f"""
-        SELECT ticker, COUNT(*) AS row_count
-        FROM raw_price_history
-        WHERE ticker IN ({placeholders})
-          AND date >= ?
-          AND date < ?
-          AND low IS NOT NULL
-          AND close IS NOT NULL
-          AND volume IS NOT NULL
-        GROUP BY ticker
-    """
-    rows = conn.execute(query, params).fetchall()
-    seen = {row[0] for row in rows if int(row[1]) > 0}
-    return seen == set(tickers)
+    return get_tickers_with_cached_coverage(conn, tickers, low_start, end_date) == set(tickers)
 
 
 def get_invalid_tickers(conn: sqlite3.Connection, source: str) -> set[str]:
