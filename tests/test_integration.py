@@ -162,3 +162,115 @@ class TestRunPatterns:
         )
         raw_df = _make_raw_df(["AAPL"])
         screener._run_patterns(["AAPL"], raw_df)
+
+
+# ---------------------------------------------------------------------------
+# _handle_chart helper
+# ---------------------------------------------------------------------------
+
+class TestHandleChart:
+
+    def test_returns_figure_for_known_ticker(self):
+        """_handle_chart must return a plotly Figure for a ticker in raw_df."""
+        import plotly.graph_objects as go
+        raw_df = _make_raw_df(["AAPL"])
+        fig = screener._handle_chart("AAPL", raw_df, show=False)
+        assert isinstance(fig, go.Figure)
+
+    def test_returns_none_for_unknown_ticker(self):
+        """_handle_chart returns None when ticker not in raw_df."""
+        raw_df = _make_raw_df(["AAPL"])
+        result = screener._handle_chart("MISSING", raw_df, show=False)
+        assert result is None
+
+    def test_show_false_does_not_open_browser(self, monkeypatch):
+        """_handle_chart(show=False) must not call fig.show()."""
+        import plotly.graph_objects as go
+        called = []
+        monkeypatch.setattr(go.Figure, "show", lambda self, *a, **kw: called.append(1))
+        raw_df = _make_raw_df(["AAPL"])
+        screener._handle_chart("AAPL", raw_df, show=False)
+        assert called == []
+
+
+# ---------------------------------------------------------------------------
+# _handle_strategy helper
+# ---------------------------------------------------------------------------
+
+class TestHandleStrategy:
+
+    def test_returns_list_for_known_ticker(self):
+        """_handle_strategy must return a list for a ticker in raw_df."""
+        raw_df = _make_raw_df(["AAPL"])
+        result = screener._handle_strategy("AAPL", raw_df)
+        assert isinstance(result, list)
+
+    def test_returns_empty_list_for_unknown_ticker(self):
+        """_handle_strategy returns [] when ticker not in raw_df."""
+        raw_df = _make_raw_df(["AAPL"])
+        result = screener._handle_strategy("MISSING", raw_df)
+        assert result == []
+
+    def test_each_item_is_trade_setup(self):
+        """Each item in the result list must be a TradeSetup."""
+        from strategies import TradeSetup
+        raw_df = _make_raw_df(["AAPL"])
+        result = screener._handle_strategy("AAPL", raw_df)
+        for item in result:
+            assert isinstance(item, TradeSetup)
+
+
+# ---------------------------------------------------------------------------
+# run() dispatch tests (monkeypatched fetch_data)
+# ---------------------------------------------------------------------------
+
+def _fake_fetch_data(*args, **kwargs):
+    return _make_raw_df(["AAPL", "MSFT"])
+
+
+def _make_run_args(**overrides):
+    """Build a minimal Namespace that run() accepts."""
+    import argparse
+    defaults = dict(
+        low_start="2025-01-01", low_end="2025-04-30",
+        min_price=5.0, min_dollar_vol=1.0, top=5,
+        universe="all", refresh=False, schedule=False,
+        output=None, sort="bounce", benchmark_mode="any",
+        exclude_sections="none", min_pct_of_52wk_high=0.0,
+        patterns=False, chart=None, strategy=None,
+    )
+    defaults.update(overrides)
+    return argparse.Namespace(**defaults)
+
+
+class TestRunDispatch:
+
+    def test_chart_flag_calls_handle_chart(self, monkeypatch, tmp_path):
+        """run(--chart AAPL) must call _handle_chart with the right ticker."""
+        called = []
+        monkeypatch.setattr(screener, "fetch_data", _fake_fetch_data)
+        monkeypatch.setattr(screener, "_handle_chart",
+                            lambda ticker, raw_df, show=True: called.append(ticker) or None)
+        args = _make_run_args(chart="AAPL")
+        screener.run(args)
+        assert "AAPL" in called
+
+    def test_strategy_flag_calls_handle_strategy(self, monkeypatch):
+        """run(--strategy AAPL) must call _handle_strategy with the right ticker."""
+        called = []
+        monkeypatch.setattr(screener, "fetch_data", _fake_fetch_data)
+        monkeypatch.setattr(screener, "_handle_strategy",
+                            lambda ticker, raw_df: called.append(ticker) or [])
+        args = _make_run_args(strategy="AAPL")
+        screener.run(args)
+        assert "AAPL" in called
+
+    def test_patterns_flag_calls_run_patterns(self, monkeypatch):
+        """run(--patterns) must call _run_patterns after screening."""
+        called = []
+        monkeypatch.setattr(screener, "fetch_data", _fake_fetch_data)
+        monkeypatch.setattr(screener, "_run_patterns",
+                            lambda tickers, raw_df: called.append(tickers) or {t: [] for t in tickers})
+        args = _make_run_args(patterns=True)
+        screener.run(args)
+        assert called, "_run_patterns was not called"

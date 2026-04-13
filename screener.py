@@ -343,6 +343,35 @@ def _run_patterns(tickers: list[str], raw_df: pd.DataFrame) -> dict[str, list]:
     return results
 
 
+def _handle_chart(ticker: str, raw_df: pd.DataFrame, show: bool = True):
+    """Render a plotly chart for ticker with pattern overlays.
+
+    Returns the Figure, or None if ticker not found in raw_df.
+    """
+    from charts import chart
+    from patterns import detect_all
+    from strategies import strategy as compute_strategy
+
+    df = _slice_for_patterns(ticker, raw_df)
+    if df is None:
+        return None
+    patterns = detect_all(df, ticker)
+    setup = compute_strategy(patterns[0]) if patterns else None
+    return chart(ticker, df, patterns, setup=setup, show=show)
+
+
+def _handle_strategy(ticker: str, raw_df: pd.DataFrame) -> list:
+    """Return a list of TradeSetup objects for all detected patterns for ticker."""
+    from patterns import detect_all
+    from strategies import strategy as compute_strategy
+
+    df = _slice_for_patterns(ticker, raw_df)
+    if df is None:
+        return []
+    patterns = detect_all(df, ticker)
+    return [compute_strategy(pr) for pr in patterns if pr.pivots]
+
+
 def run(args: argparse.Namespace) -> pd.DataFrame:
     tickers = _with_reference_tickers(_select_universe(args.universe))
     end_date = _today_market_date().isoformat()
@@ -354,6 +383,20 @@ def run(args: argparse.Namespace) -> pd.DataFrame:
         refresh=args.refresh,
         db_path=Path("market_surge.db"),
     )
+
+    # Single-ticker modes: dispatch and return early
+    if args.chart:
+        _handle_chart(args.chart, raw_df, show=True)
+        return pd.DataFrame()
+
+    if args.strategy:
+        setups = _handle_strategy(args.strategy, raw_df)
+        for setup in setups:
+            print(
+                f"{setup.pattern}: entry={setup.entry:.2f}  stop={setup.stop:.2f}"
+                f"  target={setup.target:.2f}  rr={setup.risk_reward}  risk={setup.risk_pct:.1%}"
+            )
+        return pd.DataFrame()
 
     summary_all = _compute_summary(raw_df, low_start=args.low_start, low_end=args.low_end)
     benchmark_bounces = _compute_benchmark_bounces(raw_df, low_start=args.low_start, low_end=args.low_end)
@@ -378,6 +421,12 @@ def run(args: argparse.Namespace) -> pd.DataFrame:
 
     top_n = 10 if args.schedule else args.top
     show_results(filtered, top=top_n, plain=args.schedule, benchmark_bounces=benchmark_bounces)
+
+    if args.patterns and not filtered.empty:
+        pattern_map = _run_patterns(filtered["Ticker"].tolist(), raw_df)
+        for ticker, patterns in pattern_map.items():
+            for pr in patterns:
+                print(f"{ticker}  {pr.pattern}  conf={pr.confidence:.2f}")
 
     conn = init_db("market_surge.db")
     try:
