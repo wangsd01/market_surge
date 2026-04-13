@@ -17,7 +17,7 @@ from fetcher import (
     get_ticker_metadata,
     get_tickers,
 )
-from filters import apply_dollar_vol_filter, apply_price_filter, compute_bounce
+from filters import apply_52wk_high_filter, apply_dollar_vol_filter, apply_price_filter, compute_bounce
 
 REFERENCE_TICKERS = ("QLD", "TQQQ")
 DEFAULT_EXCLUDED_SECTIONS = "biotechnology"
@@ -40,6 +40,29 @@ def build_parser() -> argparse.ArgumentParser:
         "--exclude-sections",
         default=DEFAULT_EXCLUDED_SECTIONS,
         help="Comma-separated sections to exclude (case-insensitive). Use 'none' to disable.",
+    )
+    parser.add_argument(
+        "--min-pct-of-52wk-high",
+        type=float,
+        default=0.70,
+        help="Only keep stocks whose current price is at least this fraction of their 52-week high (default: 0.70).",
+    )
+    parser.add_argument(
+        "--patterns",
+        action="store_true",
+        help="Detect chart patterns in screener output and print results.",
+    )
+    parser.add_argument(
+        "--chart",
+        metavar="TICKER",
+        default=None,
+        help="Render a plotly candlestick chart with pattern overlays for TICKER.",
+    )
+    parser.add_argument(
+        "--strategy",
+        metavar="TICKER",
+        default=None,
+        help="Print trade setup derived from detected patterns for TICKER.",
     )
     return parser
 
@@ -129,6 +152,9 @@ def _attach_metadata(summary_df: pd.DataFrame, metadata_by_ticker: dict[str, dic
     out["industry"] = ticker_keys.map(
         lambda ticker: metadata_by_ticker.get(ticker, {}).get("industry", DEFAULT_INDUSTRY)
     ).fillna(DEFAULT_INDUSTRY)
+    out["fifty_two_week_high"] = ticker_keys.map(
+        lambda ticker: metadata_by_ticker.get(ticker, {}).get("fifty_two_week_high")
+    )
     return out
 
 
@@ -284,6 +310,39 @@ def _format_csv_ranking_for_output(ranked_df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def _slice_for_patterns(ticker: str, raw_df: pd.DataFrame) -> pd.DataFrame | None:
+    """Return last 90 trading days of OHLCV data for ticker as a DatetimeIndex DataFrame.
+
+    Returns None if ticker is not present in raw_df.
+    """
+    if raw_df is None or raw_df.empty:
+        return None
+    group = raw_df.loc[raw_df["Ticker"] == ticker].copy()
+    if group.empty:
+        return None
+    group = group.sort_values("Date")
+    group["Date"] = pd.to_datetime(group["Date"])
+    group = group.set_index("Date").tail(90)
+    return group[["Open", "High", "Low", "Close", "Volume"]]
+
+
+def _run_patterns(tickers: list[str], raw_df: pd.DataFrame) -> dict[str, list]:
+    """Run pattern detection on each ticker's last 90 days.
+
+    Returns dict mapping ticker -> list[PatternResult] (empty list on failure).
+    """
+    from patterns import detect_all
+
+    results: dict[str, list] = {}
+    for ticker in tickers:
+        df = _slice_for_patterns(ticker, raw_df)
+        if df is None:
+            results[ticker] = []
+        else:
+            results[ticker] = detect_all(df, ticker)
+    return results
+
+
 def run(args: argparse.Namespace) -> pd.DataFrame:
     tickers = _with_reference_tickers(_select_universe(args.universe))
     end_date = _today_market_date().isoformat()
@@ -308,6 +367,7 @@ def run(args: argparse.Namespace) -> pd.DataFrame:
     summary = _attach_metadata(summary, metadata_by_ticker)
     summary = _apply_section_filter(summary, excluded_sections=_parse_excluded_sections(args.exclude_sections))
     filtered = apply_price_filter(summary, min_price=args.min_price)
+    filtered = apply_52wk_high_filter(filtered, min_pct_of_52wk_high=args.min_pct_of_52wk_high)
     filtered = apply_dollar_vol_filter(filtered, min_dollar_vol=args.min_dollar_vol)
     filtered = _sort_results(filtered, sort_key=args.sort)
     csv_ranking = _build_csv_ranking(filtered, summary_all, benchmark_bounces=benchmark_bounces)
