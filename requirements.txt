@@ -1,0 +1,7 @@
+yfinance
+pandas
+pyarrow
+rich
+requests
+pytest
+lxml

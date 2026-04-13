@@ -1,0 +1,3 @@
+write script to screen stocks that raise most from the recent US market low, e.g. 03/31/2026. Please add options to filter stocks under certain price,e.g. min price > $5, price * vol > 50 million.
+
+In the future, I plan to expand it to a stock trading tool, including screener, pattern recgonizer (cup with handle, double bottom, three wave down, upper/lower channel, etc.), figure out the price to place order, stop loss, stop gain, etc. But you just think about it and no need to implement the whole tool.
