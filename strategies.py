@@ -11,6 +11,7 @@ RISK_REWARD: dict[str, float] = {
     "cup_handle": 2.5,
     "vcp": 2.5,
     "double_bottom": 2.0,
+    "flat_base": 2.0,
     "channel": 2.0,
     "support_resistance": 2.0,
 }
@@ -20,29 +21,45 @@ RISK_REWARD: dict[str, float] = {
 class TradeSetup:
     pattern: str
     ticker: str
-    entry: float       # breakout level * 1.0005 (0.05% above pivot high)
+    entry: float
     stop: float        # pattern low
     target: float      # entry + (entry - stop) * risk_reward
+    risk_per_share: float
     risk_reward: float
     risk_pct: float    # (entry - stop) / entry
+    invalidation_rule: str
 
 
 def strategy(result: PatternResult) -> TradeSetup:
     """Derive informational trade setup from PatternResult geometry."""
     breakout, stop = _levels(result)
-    entry = breakout * 1.0005
+    entry = _entry_price(result.pattern, breakout)
     rr = RISK_REWARD[result.pattern]
-    target = entry + (entry - stop) * rr
-    risk_pct = (entry - stop) / entry
+    risk_per_share = entry - stop
+    target = entry + risk_per_share * rr
+    risk_pct = risk_per_share / entry
     return TradeSetup(
         pattern=result.pattern,
         ticker=result.ticker,
         entry=entry,
         stop=stop,
         target=target,
+        risk_per_share=risk_per_share,
         risk_reward=rr,
         risk_pct=risk_pct,
+        invalidation_rule="invalid if price trades below stop",
     )
+
+
+def _entry_price(pattern: str, breakout: float) -> float:
+    """Apply pattern-specific breakout buffers."""
+    if pattern == "cup_handle":
+        return breakout + 0.10
+    if pattern == "double_bottom":
+        return breakout + 0.10
+    if pattern == "flat_base":
+        return breakout + 0.10
+    return breakout * 1.0005
 
 
 def _levels(result: PatternResult) -> tuple[float, float]:
@@ -55,6 +72,9 @@ def _levels(result: PatternResult) -> tuple[float, float]:
 
     if p == "double_bottom":
         return pivots["middle_high"], pivots["second_trough"]
+
+    if p == "flat_base":
+        return pivots["base_high"], pivots["base_low"]
 
     if p == "vcp":
         # Last high_N pivot (highest N present)
@@ -84,9 +104,13 @@ def _levels(result: PatternResult) -> tuple[float, float]:
                 resistances.append(price)
             else:
                 supports.append(price)
+        if not resistances or not supports:
+            raise ValueError("support/resistance setup requires resistance above and support below price")
         # Nearest resistance above (smallest resistance), nearest support below (largest support)
-        breakout = min(resistances) if resistances else max(pivots.values())
-        stop = max(supports) if supports else min(pivots.values())
+        breakout = min(resistances)
+        stop = max(supports)
+        if breakout <= stop:
+            raise ValueError("support/resistance setup requires breakout above stop")
         return breakout, stop
 
     raise ValueError(f"Unknown pattern: {p}")

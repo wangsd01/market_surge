@@ -133,6 +133,32 @@ class TestDoubleBottomDetector:
         if result is not None:
             assert result.confidence < 1.0
 
+    def test_second_bottom_must_undercut_first_bottom(self, make_ohlcv):
+        """A proper double bottom has the second trough slightly below the first."""
+        prices = [
+            100, 98, 96, 93, 90, 87, 84, 82, 80, 78,
+            76, 75, 75, 75, 76,
+            78, 80, 82, 84, 86, 87, 88, 89, 90, 90,
+            90, 90, 90, 89, 88, 87, 86, 85, 84, 83,
+            82, 80, 78, 78, 77, 77, 77, 77, 77, 77,
+            77, 77, 77, 77, 77,
+            78, 80, 83, 86, 88, 90, 92, 94, 95, 96,
+        ]
+        volumes = (
+            [1_000_000] * 10
+            + [1_200_000, 1_300_000, 1_300_000, 1_200_000, 1_100_000]
+            + [1_000_000] * 20
+            + [800_000, 750_000, 700_000, 650_000, 600_000,
+               550_000, 550_000, 580_000, 580_000, 580_000,
+               580_000, 580_000, 580_000, 580_000, 580_000]
+            + [1_000_000] * 10
+        )
+        df = make_ohlcv(prices, volumes)
+
+        result = DoubleBottomDetector().detect(df, "TEST")
+
+        assert result is None
+
     def test_no_network_calls(self, make_ohlcv, monkeypatch):
         """Detector must not make any network calls."""
         import urllib.request

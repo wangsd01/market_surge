@@ -119,6 +119,29 @@ class TestCupHandleDetector:
         if result is not None:
             assert result.confidence < 1.0
 
+    def test_handle_must_form_in_upper_half_of_base(self, make_ohlcv):
+        """A handle that undercuts the base midpoint should not qualify."""
+        prices = [
+            90, 95, 100, 99, 98,
+            96, 93, 90, 87, 84, 82, 79, 77, 76, 75,
+            75, 75, 75, 76, 77, 78, 79, 81, 83, 85,
+            87, 89, 91, 92, 93, 94, 95, 96, 97, 97,
+            97, 97, 97, 97, 97,
+            95, 92, 88, 84, 80, 77, 78, 80, 82, 84,
+            86, 88, 90, 92, 94,
+        ]
+        volumes = (
+            [1_000_000] * 40
+            + [900_000, 850_000, 800_000, 760_000, 720_000,
+               680_000, 660_000, 650_000, 640_000, 630_000]
+            + [1_000_000] * 5
+        )
+        df = make_ohlcv(prices, volumes)
+
+        result = CupHandleDetector().detect(df, "TEST")
+
+        assert result is None
+
     def test_no_network_calls(self, make_ohlcv, monkeypatch):
         """Detector must not make any network calls."""
         import urllib.request

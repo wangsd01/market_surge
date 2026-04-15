@@ -33,6 +33,11 @@ VCP_RESULT = _result(
     {"high_1": 105.0, "low_1": 95.0, "high_2": 102.0, "low_2": 97.0, "high_3": 100.0},
 )
 
+FLAT_BASE_RESULT = _result(
+    "flat_base",
+    {"base_high": 120.0, "base_low": 108.0},
+)
+
 CHANNEL_RESULT = _result(
     "channel",
     {"channel_top": 115.0, "channel_bottom": 100.0},
@@ -44,6 +49,13 @@ SR_RESULT = _result(
     "support_resistance",
     {"level_1": 95.0, "level_2": 105.0, "level_3": 115.0},
     metadata={"type_1": "support", "type_2": "resistance", "type_3": "resistance",
+              "touch_count_1": 3, "touch_count_2": 2, "touch_count_3": 2},
+)
+
+INVALID_SR_RESULT = _result(
+    "support_resistance",
+    {"level_1": 90.0, "level_2": 95.0, "level_3": 100.0},
+    metadata={"type_1": "support", "type_2": "support", "type_3": "support",
               "touch_count_1": 3, "touch_count_2": 2, "touch_count_3": 2},
 )
 
@@ -61,10 +73,10 @@ class TestTradeSetup:
         assert result.ticker == "TEST"
         assert result.pattern == "cup_handle"
 
-    def test_entry_is_0_05pct_above_breakout(self):
-        """Entry = breakout_level * 1.0005 for cup_handle."""
+    def test_entry_is_ten_cents_above_cup_handle_buy_point(self):
+        """Cup-handle buy point = handle high + $0.10."""
         result = strategy(CUP_RESULT)
-        expected_entry = 107.0 * 1.0005
+        expected_entry = 107.10
         assert abs(result.entry - expected_entry) < 0.001
 
     def test_target_equals_entry_plus_rr_times_risk(self):
@@ -79,10 +91,21 @@ class TestTradeSetup:
         expected_risk_pct = (result.entry - result.stop) / result.entry
         assert abs(result.risk_pct - expected_risk_pct) < 0.0001
 
-    def test_cup_handle_uses_handle_high_as_breakout(self):
-        """Cup-handle breakout = handle_high."""
+    def test_risk_per_share_equals_entry_minus_stop(self):
+        """risk_per_share = entry - stop."""
         result = strategy(CUP_RESULT)
-        assert abs(result.entry - CUP_RESULT.pivots["handle_high"] * 1.0005) < 0.001
+        expected_risk_per_share = result.entry - result.stop
+        assert abs(result.risk_per_share - expected_risk_per_share) < 0.0001
+
+    def test_invalidation_rule_is_price_below_stop(self):
+        """The v1 invalidation rule is fixed and price-based."""
+        result = strategy(CUP_RESULT)
+        assert result.invalidation_rule == "invalid if price trades below stop"
+
+    def test_cup_handle_uses_handle_high_as_breakout(self):
+        """Cup-handle entry uses the handle high plus the standard ten-cent buffer."""
+        result = strategy(CUP_RESULT)
+        assert abs(result.entry - (CUP_RESULT.pivots["handle_high"] + 0.10)) < 0.001
 
     def test_cup_handle_uses_handle_low_as_stop(self):
         """Cup-handle stop = handle_low."""
@@ -90,9 +113,9 @@ class TestTradeSetup:
         assert abs(result.stop - CUP_RESULT.pivots["handle_low"]) < 0.001
 
     def test_double_bottom_uses_middle_high_as_breakout(self):
-        """Double-bottom breakout = middle_high."""
+        """Double-bottom buy point = middle_high + $0.10."""
         result = strategy(DOUBLE_RESULT)
-        assert abs(result.entry - DOUBLE_RESULT.pivots["middle_high"] * 1.0005) < 0.001
+        assert abs(result.entry - 100.10) < 0.001
 
     def test_double_bottom_uses_second_trough_as_stop(self):
         """Double-bottom stop = second_trough."""
@@ -104,6 +127,16 @@ class TestTradeSetup:
         result = strategy(VCP_RESULT)
         last_high = VCP_RESULT.pivots["high_3"]
         assert abs(result.entry - last_high * 1.0005) < 0.001
+
+    def test_flat_base_uses_base_high_plus_ten_cents(self):
+        """Flat-base buy point = base_high + $0.10."""
+        result = strategy(FLAT_BASE_RESULT)
+        assert abs(result.entry - 120.10) < 0.001
+
+    def test_flat_base_uses_base_low_as_stop(self):
+        """Flat-base stop = base_low."""
+        result = strategy(FLAT_BASE_RESULT)
+        assert abs(result.stop - 108.0) < 0.001
 
     def test_channel_uses_channel_top_as_breakout(self):
         """Channel breakout = channel_top."""
@@ -129,21 +162,26 @@ class TestTradeSetup:
         result = strategy(SR_RESULT)
         assert abs(result.stop - 95.0) < 0.001
 
+    def test_sr_requires_resistance_above_and_support_below(self):
+        """An S/R pattern without a real breakout level should be rejected."""
+        with pytest.raises(ValueError, match="support/resistance"):
+            strategy(INVALID_SR_RESULT)
+
     def test_risk_reward_matches_pattern_table(self):
         """Risk/reward ratio must match the RISK_REWARD lookup table."""
         from strategies import RISK_REWARD
-        for pr in [CUP_RESULT, DOUBLE_RESULT, VCP_RESULT, CHANNEL_RESULT, SR_RESULT]:
+        for pr in [CUP_RESULT, DOUBLE_RESULT, VCP_RESULT, FLAT_BASE_RESULT, CHANNEL_RESULT, SR_RESULT]:
             result = strategy(pr)
             assert result.risk_reward == RISK_REWARD[pr.pattern]
 
     def test_entry_always_above_stop(self):
         """Entry must always be above stop for all patterns."""
-        for pr in [CUP_RESULT, DOUBLE_RESULT, VCP_RESULT, CHANNEL_RESULT, SR_RESULT]:
+        for pr in [CUP_RESULT, DOUBLE_RESULT, VCP_RESULT, FLAT_BASE_RESULT, CHANNEL_RESULT, SR_RESULT]:
             result = strategy(pr)
             assert result.entry > result.stop, f"entry <= stop for {pr.pattern}"
 
     def test_target_always_above_entry(self):
         """Target must always be above entry for all patterns."""
-        for pr in [CUP_RESULT, DOUBLE_RESULT, VCP_RESULT, CHANNEL_RESULT, SR_RESULT]:
+        for pr in [CUP_RESULT, DOUBLE_RESULT, VCP_RESULT, FLAT_BASE_RESULT, CHANNEL_RESULT, SR_RESULT]:
             result = strategy(pr)
             assert result.target > result.entry, f"target <= entry for {pr.pattern}"

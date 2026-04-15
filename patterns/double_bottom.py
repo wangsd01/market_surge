@@ -88,9 +88,13 @@ class DoubleBottomDetector(PatternDetector):
                     return float(np.mean(volumes[lo:hi]))
 
                 c4 = _avg_vol(actual_t2) <= _avg_vol(t1_idx)
+                c5 = t2_price <= t1_price
 
-                conditions_met = sum([c1, c2, c3, c4])
-                confidence = conditions_met / 4
+                if not (c1 and c3 and c5):
+                    continue
+
+                conditions_met = sum([c1, c2, c3, c4, c5])
+                confidence = conditions_met / 5
 
                 if confidence > best_confidence:
                     best_confidence = confidence

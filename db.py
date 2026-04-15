@@ -85,6 +85,7 @@ def init_db(db_path: str | Path) -> sqlite3.Connection:
     )
     _migrate_screening_runs_max_to_min_price(conn)
     _migrate_results_add_industry(conn)
+    _migrate_ticker_metadata_add_fifty_two_week_high(conn)
     return conn
 
 
@@ -101,6 +102,12 @@ def _migrate_results_add_industry(conn: sqlite3.Connection) -> None:
     cols = {row[1] for row in conn.execute("PRAGMA table_info(results)").fetchall()}
     if "industry" not in cols:
         conn.execute("ALTER TABLE results ADD COLUMN industry TEXT")
+
+
+def _migrate_ticker_metadata_add_fifty_two_week_high(conn: sqlite3.Connection) -> None:
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(ticker_metadata)").fetchall()}
+    if "fifty_two_week_high" not in cols:
+        conn.execute("ALTER TABLE ticker_metadata ADD COLUMN fifty_two_week_high REAL")
 
 
 def _pick(df: pd.DataFrame, idx: int, *candidates: str) -> Any:
@@ -390,7 +397,7 @@ def get_ticker_metadata(conn: sqlite3.Connection, tickers: list[str]) -> dict[st
     placeholders = ",".join("?" for _ in normalized)
     rows = conn.execute(
         f"""
-        SELECT ticker, sector, industry
+        SELECT ticker, sector, industry, fifty_two_week_high
         FROM ticker_metadata
         WHERE ticker IN ({placeholders})
         """,
@@ -400,8 +407,9 @@ def get_ticker_metadata(conn: sqlite3.Connection, tickers: list[str]) -> dict[st
         str(ticker).upper(): {
             "sector": "" if sector is None else str(sector),
             "industry": "" if industry is None else str(industry),
+            "fifty_two_week_high": None if h52 is None else float(h52),
         }
-        for ticker, sector, industry in rows
+        for ticker, sector, industry, h52 in rows
     }
 
 
@@ -415,6 +423,7 @@ def save_ticker_metadata(conn: sqlite3.Connection, metadata_by_ticker: dict[str,
             str(ticker).strip().upper(),
             str(values.get("sector", "")).strip(),
             str(values.get("industry", "")).strip(),
+            values.get("fifty_two_week_high"),
             updated_at,
         )
         for ticker, values in metadata_by_ticker.items()
@@ -427,8 +436,8 @@ def save_ticker_metadata(conn: sqlite3.Connection, metadata_by_ticker: dict[str,
         conn.executemany(
             """
             INSERT OR REPLACE INTO ticker_metadata
-            (ticker, sector, industry, updated_at)
-            VALUES (?, ?, ?, ?)
+            (ticker, sector, industry, fifty_two_week_high, updated_at)
+            VALUES (?, ?, ?, ?, ?)
             """,
             records,
         )

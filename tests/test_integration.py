@@ -98,11 +98,11 @@ class TestSliceForPatterns:
         assert result is None
 
     def test_slices_to_at_most_90_days(self):
-        """_slice_for_patterns must return at most 90 rows."""
-        raw_df = _make_raw_df(["AAPL"], n_days=120)
+        """_slice_for_patterns must return at most the configured pattern lookback."""
+        raw_df = _make_raw_df(["AAPL"], n_days=screener.PATTERN_LOOKBACK_DAYS + 30)
         result = screener._slice_for_patterns("AAPL", raw_df)
         assert result is not None
-        assert len(result) <= 90
+        assert len(result) <= screener.PATTERN_LOOKBACK_DAYS
 
     def test_result_has_ohlcv_columns(self):
         """Returned DataFrame must have Open, High, Low, Close, Volume columns."""
@@ -219,6 +219,28 @@ class TestHandleStrategy:
         for item in result:
             assert isinstance(item, TradeSetup)
 
+    def test_invalid_support_resistance_setup_is_skipped(self, monkeypatch):
+        """Invalid S/R patterns should not crash strategy rendering."""
+        raw_df = _make_raw_df(["AAPL"])
+        invalid_sr = PatternResult(
+            pattern="support_resistance",
+            ticker="AAPL",
+            confidence=1.0,
+            detected_on=date(2025, 3, 31),
+            pivots={"level_1": 90.0, "level_2": 95.0, "level_3": 100.0},
+            pivot_dates={
+                "level_1": date(2025, 3, 1),
+                "level_2": date(2025, 3, 2),
+                "level_3": date(2025, 3, 3),
+            },
+            metadata={"type_1": "support", "type_2": "support", "type_3": "support"},
+        )
+        monkeypatch.setattr("patterns.detect_all", lambda df, ticker: [invalid_sr])
+
+        result = screener._handle_strategy("AAPL", raw_df)
+
+        assert result == []
+
 
 # ---------------------------------------------------------------------------
 # run() dispatch tests (monkeypatched fetch_data)
@@ -248,6 +270,7 @@ class TestRunDispatch:
     def test_chart_flag_calls_handle_chart(self, monkeypatch, tmp_path):
         """run(--chart AAPL) must call _handle_chart with the right ticker."""
         called = []
+        monkeypatch.setattr(screener, "_select_universe", lambda _universe: [])
         monkeypatch.setattr(screener, "fetch_data", _fake_fetch_data)
         monkeypatch.setattr(screener, "_handle_chart",
                             lambda ticker, raw_df, show=True: called.append(ticker) or None)
@@ -258,6 +281,7 @@ class TestRunDispatch:
     def test_strategy_flag_calls_handle_strategy(self, monkeypatch):
         """run(--strategy AAPL) must call _handle_strategy with the right ticker."""
         called = []
+        monkeypatch.setattr(screener, "_select_universe", lambda _universe: [])
         monkeypatch.setattr(screener, "fetch_data", _fake_fetch_data)
         monkeypatch.setattr(screener, "_handle_strategy",
                             lambda ticker, raw_df: called.append(ticker) or [])
@@ -268,6 +292,7 @@ class TestRunDispatch:
     def test_patterns_flag_calls_run_patterns(self, monkeypatch):
         """run(--patterns) must call _run_patterns after screening."""
         called = []
+        monkeypatch.setattr(screener, "_select_universe", lambda _universe: [])
         monkeypatch.setattr(screener, "fetch_data", _fake_fetch_data)
         monkeypatch.setattr(screener, "_run_patterns",
                             lambda tickers, raw_df: called.append(tickers) or {t: [] for t in tickers})

@@ -4,6 +4,7 @@ import pandas as pd
 
 from screener import _apply_benchmark_filter, _apply_section_filter, _attach_metadata, _compute_benchmark_bounces, build_parser
 from screener import _build_csv_ranking
+from screener import PATTERN_LOOKBACK_DAYS
 from screener import _with_reference_tickers
 from screener import _format_csv_ranking_for_output
 from screener import _parse_excluded_sections
@@ -243,3 +244,36 @@ def test_run_fetches_only_finished_days(monkeypatch, tmp_path):
     run(args)
 
     assert captured["end_date"] == "2026-04-12"
+
+
+def test_run_extends_fetch_history_for_pattern_modes(monkeypatch, tmp_path):
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "--low-start",
+            "2026-04-01",
+            "--patterns",
+            "--output",
+            str(tmp_path / "ranking.csv"),
+        ]
+    )
+    captured = {"low_start": None}
+
+    def _mock_fetch_data(*, tickers, low_start, end_date, cache_dir, refresh, db_path):
+        captured["low_start"] = low_start
+        return pd.DataFrame(columns=["Date", "Ticker", "Low", "Close", "Volume"])
+
+    monkeypatch.setattr("screener._today_market_date", lambda: pd.Timestamp("2026-04-12").date())
+    monkeypatch.setattr("screener._select_universe", lambda _universe: [])
+    monkeypatch.setattr("screener.fetch_data", _mock_fetch_data)
+    monkeypatch.setattr("screener.get_ticker_metadata", lambda *args, **kwargs: {})
+    monkeypatch.setattr("screener.show_results", lambda *args, **kwargs: None)
+    monkeypatch.setattr("screener.save_run", lambda *args, **kwargs: 1)
+
+    run(args)
+
+    expected = (
+        pd.Timestamp("2026-04-12")
+        - pd.offsets.BDay(PATTERN_LOOKBACK_DAYS - 1)
+    ).date().isoformat()
+    assert captured["low_start"] == expected

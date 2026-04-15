@@ -6,20 +6,30 @@ and how to build it.
 
 ## Project Overview
 
-market_surge is a personal trading toolkit that screens US stocks for bounce setups,
-detects classic chart patterns, visualizes them with plotly, and generates informational
-trade recommendations (entry, stop, target).
+market_surge is a personal trading toolkit organized around this user-facing pipeline:
+1. Screen US stocks for bounce setups.
+2. Run chart-pattern recognition on the screened stocks.
+3. Generate informational trade strategies for stocks with detected patterns.
+4. Plot stock charts with the detected pattern and strategy overlays.
 
-**Current state (Phase 1 complete):**
+The pipeline order matters:
+- screening narrows the universe first
+- pattern detection runs on screened names
+- strategy generation depends on detected pattern geometry
+- charting is the final review surface only for tickers that have both a detected pattern and a generated strategy
+
+**Current state:**
 - `fetcher.py` — yfinance OHLCV downloader with SQLite cache
 - `db.py` — SQLite schema and CRUD operations
 - `filters.py` — screening filters (volume, price, 52-week high)
-- `screener.py` — CLI entry point
+- `screener.py` — screening-stage CLI
+- `main.py` — Decision Ticket CLI for ranking and sizing up to 3 planned-order tickets; auto-warms `sp500` cache on first use and auto-saves the top-ranked ticket chart with strategy annotations
 - `display.py` — rich table output
 - `tests/` — test suite for all existing modules
 
-**Design doc:** `~/.gstack/projects/market_surge/wang-main-design-20260412-224215.md`
-Read this for full architecture rationale and pattern quantitative definitions.
+**Design docs:**
+- `design.md` — current in-repo description of the end-to-end trading pipeline
+- `~/.gstack/projects/market_surge/wang-main-design-20260412-224215.md` — longer architecture rationale and pattern quantitative definitions
 
 ---
 
@@ -53,8 +63,9 @@ Read this for full architecture rationale and pattern quantitative definitions.
 
 ### Phase 5 — Integration
 
-- [x] `screener.py` — add `--patterns`, `--chart TICKER`, `--strategy TICKER` flags
-- [x] End-to-end integration test
+- [x] `main.py` — extend the Decision Ticket CLI to render and save a chart with strategy annotations for the top-ranked ticket from the current run
+- [ ] `screener.py` — remain responsible for screening only and output tickers for downstream stages
+- [ ] End-to-end integration test for `main.py`: screen → detect → strategy → visualize
 
 ---
 
@@ -69,7 +80,7 @@ Pick the next unchecked item in the task queue above. Then:
 3. Run `python -m pytest tests/` — tests must FAIL at this point (red)
 4. Write the implementation
 5. Run `python -m pytest tests/` — all tests must PASS (green)
-6. Commit: `git add <files> && git commit -m "feat: implement <module>"`
+6. Commit only the logical change you just completed. If the work spans multiple concerns, split it into multiple commits.
 7. Mark the checkbox above as done: `[x]`
 
 **Codex invocation:**
@@ -84,7 +95,6 @@ red -> green. Commit with message: 'feat: implement cup with handle pattern dete
 After Codex commits, run `/review` in Claude Code. Claude checks:
 - Tests pass and test cases cover edge cases from the spec
 - PatternResult returned (not raw dicts)
-- No network calls in tests (uses conftest.py fixture)
 - Coding standards met (see below)
 
 ---
@@ -96,7 +106,8 @@ After Codex commits, run `/review` in Claude Code. Claude checks:
 - **PatternResult**: always return `PatternResult` dataclass, never raw dicts.
 - **No print()** in library code. Use `logging.getLogger(__name__)`.
 - **No network in tests**: use `make_ohlcv` fixture from `tests/conftest.py`.
-- **One commit per module**. Format: `feat: implement <description>`
+- **Commit modularly**: one logical change per commit. If work spans multiple concerns, split it into separate commits.
+- **Commit message format**: `feat: implement <description>` when adding a module or feature.
 - **Run `python -m pytest tests/`** before committing. All green.
 - **Dependencies**: `plotly`, `scipy` only (no scikit-learn, no ML libraries).
 
@@ -328,10 +339,13 @@ Stop price: lowest relevant pivot (handle_low, second_trough, channel_bottom, ne
 # Current functionality
 python screener.py --min-price 10 --min-vol 1000000
 
-# Phase 5 additions (not yet implemented)
-python screener.py --patterns                    # detect patterns in screener output
-python screener.py --chart AAPL                  # plotly chart for one ticker
-python screener.py --strategy AAPL               # print trade setup
+# Current Decision Ticket CLI
+python main.py --account-size 100000 --risk-pct 0.01
+python main.py --account-size 100000 --risk-pct 0.01 --format json
+
+# Current saved review artifact
+# Each main.py run also saves the top-ranked ticket chart with strategy
+# annotations to: charts/top_ticket_<ticker>_<pattern>.html
 ```
 
 ## Tests

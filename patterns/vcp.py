@@ -10,9 +10,10 @@ logger = logging.getLogger(__name__)
 
 _MIN_ROWS = 30            # minimum df length to attempt detection
 _SWING_MIN_PCT = 0.02     # ignore swings smaller than 2%
-_CYCLES_MIN = 3
-_CYCLES_MAX = 5
-_SMA_PERIOD = 150         # condition 4: price above 150-day SMA
+_CYCLES_MIN = 2
+_CYCLES_MAX = 6
+_SHORT_SMA_PERIOD = 50
+_LONG_SMA_PERIOD = 150
 
 
 class VCPDetector(PatternDetector):
@@ -99,12 +100,23 @@ class VCPDetector(PatternDetector):
         c3 = all(recoveries[i] > recoveries[i + 1] for i in range(len(recoveries) - 1)) \
             if len(recoveries) >= 2 else True
 
-        # --- Condition 4: Price above 150-day SMA throughout (skip if df < 150 days) ---
-        if n >= _SMA_PERIOD:
-            sma150 = pd.Series(closes).rolling(_SMA_PERIOD).mean().values
-            # Check from the first cycle high onward
-            first_high_idx = valid_cycles[0][0][1]
-            c4 = bool(np.all(closes[first_high_idx:] >= sma150[first_high_idx:]))
+        # --- Condition 4: Broader uptrend / near-high context (skip if df < 150 days) ---
+        if n >= _LONG_SMA_PERIOD:
+            series = pd.Series(closes)
+            sma50 = series.rolling(_SHORT_SMA_PERIOD).mean().values
+            sma150 = series.rolling(_LONG_SMA_PERIOD).mean().values
+            latest_close = closes[-1]
+            latest_sma50 = sma50[-1]
+            latest_sma150 = sma150[-1]
+            range_high = float(np.max(closes))
+            range_low = float(np.min(closes))
+            c4 = bool(
+                latest_close >= latest_sma50
+                and latest_close >= latest_sma150
+                and latest_sma50 >= latest_sma150
+                and latest_close >= 0.75 * range_high
+                and latest_close >= 1.30 * range_low
+            )
         else:
             c4 = True  # condition skipped for short series
 
@@ -123,7 +135,7 @@ class VCPDetector(PatternDetector):
         conditions_met = sum([c1, c2, c3, c4, c5])
         confidence = conditions_met / 5
 
-        if confidence < 0.4:
+        if not (c1 and c2 and c4 and c5):
             return None
 
         # --- Build pivot dicts ---

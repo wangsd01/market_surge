@@ -12,13 +12,14 @@ _LOOKBACK_MIN = 45
 _LOOKBACK_MAX = 65
 
 # Condition thresholds
-_CUP_DEPTH_MIN = 0.15
-_CUP_DEPTH_MAX = 0.35
+_CUP_DEPTH_MIN = 0.12
+_CUP_DEPTH_MAX = 0.33
 _CUP_BOTTOM_MIN_DAYS = 10
+_CUP_BOTTOM_BAND_PCT = 0.10
 _RIGHT_RECOVERY_MAX = 0.05   # right_high within 5% of left_high
 _HANDLE_RETRACE_MAX = 0.50   # handle decline ≤ 50% of cup depth
 _HANDLE_MIN_DAYS = 5
-_HANDLE_MAX_DAYS = 15
+_HANDLE_MAX_DAYS = 30
 
 
 class CupHandleDetector(PatternDetector):
@@ -56,12 +57,6 @@ class CupHandleDetector(PatternDetector):
         cup_low_idx = left_high_idx + cup_low_rel
         cup_low_price = closes[cup_low_idx]
 
-        # Cup must have at least _CUP_BOTTOM_MIN_DAYS of width — find the span
-        # where price is within 5% above cup_low
-        cup_threshold = cup_low_price * 1.05
-        bottom_mask = closes[left_high_idx:cup_low_idx + 1] <= cup_threshold
-        bottom_span = int(np.sum(bottom_mask))
-
         # --- Locate right_high: highest close after cup_low (before handle) ---
         # Handle occupies the last _HANDLE_MIN_DAYS.._HANDLE_MAX_DAYS of the window
         # Leave room for handle; right_high is in the band after cup_low
@@ -74,9 +69,16 @@ class CupHandleDetector(PatternDetector):
         if len(recovery_segment) == 0:
             return None
 
-        right_high_rel = int(np.argmax(recovery_segment))
+        right_high_candidates = np.where(recovery_segment == recovery_segment.max())[0]
+        right_high_rel = int(right_high_candidates[-1])
         right_high_idx = handle_search_start + right_high_rel
         right_high_price = closes[right_high_idx]
+
+        # Cup must have at least _CUP_BOTTOM_MIN_DAYS of width — find the span
+        # where price is within 5% above cup_low across the rounded bottom.
+        cup_threshold = cup_low_price * (1 + _CUP_BOTTOM_BAND_PCT)
+        bottom_mask = closes[left_high_idx:right_high_idx + 1] <= cup_threshold
+        bottom_span = int(np.sum(bottom_mask))
 
         # --- Locate handle: segment after right_high to end ---
         handle_start_idx = right_high_idx + 1
@@ -119,11 +121,16 @@ class CupHandleDetector(PatternDetector):
                 slope = np.polyfit(np.arange(len(vol_sma)), vol_sma, 1)[0]
                 c6 = slope < 0
 
-        conditions_met = sum([c1, c2, c3, c4, c5, c6])
-        confidence = conditions_met / 6
+        # 7. Handle must form in the upper half of the base.
+        base_midpoint = (left_high_price + cup_low_price) / 2
+        handle_midpoint = (handle_high_price + handle_low_price) / 2
+        c7 = handle_midpoint > base_midpoint
 
-        # Only return a result if at least 3 of 6 conditions are met
-        if conditions_met < 3:
+        conditions_met = sum([c1, c2, c3, c4, c5, c6, c7])
+        confidence = conditions_met / 7
+
+        # These are structural requirements for a valid cup-with-handle.
+        if not (c1 and c2 and c3 and c4 and c5 and c7):
             return None
 
         # Build pivot dicts

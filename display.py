@@ -1,10 +1,31 @@
 from __future__ import annotations
 
 import sys
+from typing import Sequence
 
 import pandas as pd
 from rich.console import Console
 from rich.table import Table
+
+from decision_tickets import DecisionTicket
+
+
+TICKET_COLUMNS = [
+    "rank",
+    "ticker",
+    "pattern",
+    "entry",
+    "stop",
+    "target",
+    "risk_loss_pct",
+    "target_gain_pct",
+    "risk_per_share",
+    "shares",
+    "position_value",
+    "risk_value",
+    "score",
+    "summary_reason",
+]
 
 
 def _render_plain(df: pd.DataFrame, top: int) -> None:
@@ -83,3 +104,66 @@ def show_results(
 
 def show_empty() -> None:
     print("No results matching filters")
+
+
+def show_decision_tickets(tickets: Sequence[DecisionTicket], plain: bool = False) -> None:
+    if not tickets:
+        print("NO_VALID_SETUPS")
+        return
+
+    is_tty = getattr(sys.stdout, "isatty", lambda: False)()
+    if plain or not is_tty:
+        _render_ticket_plain(tickets)
+        return
+
+    table = Table(title="Decision Tickets")
+    for column in TICKET_COLUMNS:
+        justify = "left" if column in {"ticker", "pattern", "summary_reason"} else "right"
+        table.add_column(column, justify=justify, min_width=len(column), no_wrap=True)
+
+    for ticket in tickets:
+        table.add_row(
+            str(ticket.rank),
+            ticket.ticker,
+            ticket.pattern,
+            f"{ticket.entry:.2f}",
+            f"{ticket.stop:.2f}",
+            f"{ticket.target:.2f}",
+            f"{ticket.risk_loss_pct:.2f}",
+            f"{ticket.target_gain_pct:.2f}",
+            f"{ticket.risk_per_share:.2f}",
+            str(ticket.shares),
+            f"{ticket.position_value:.2f}",
+            f"{ticket.risk_value:.2f}",
+            f"{ticket.score:.4f}",
+            ticket.summary_reason,
+        )
+
+    console = Console(width=200)
+    console.print(" ".join(TICKET_COLUMNS))
+    console.print(table)
+
+
+def _render_ticket_plain(tickets: Sequence[DecisionTicket]) -> None:
+    print(" ".join(TICKET_COLUMNS))
+    for ticket in tickets:
+        print(
+            " ".join(
+                [
+                    str(ticket.rank),
+                    ticket.ticker,
+                    ticket.pattern,
+                    f"{ticket.entry:.2f}",
+                    f"{ticket.stop:.2f}",
+                    f"{ticket.target:.2f}",
+                    f"{ticket.risk_loss_pct:.2f}",
+                    f"{ticket.target_gain_pct:.2f}",
+                    f"{ticket.risk_per_share:.2f}",
+                    str(ticket.shares),
+                    f"{ticket.position_value:.2f}",
+                    f"{ticket.risk_value:.2f}",
+                    f"{ticket.score:.4f}",
+                    ticket.summary_reason,
+                ]
+            )
+        )

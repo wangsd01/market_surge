@@ -86,6 +86,19 @@ def _aggregate_dollar_volume(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def apply_52wk_high_filter(df: pd.DataFrame, min_pct_of_52wk_high: float = 0.70) -> pd.DataFrame:
+    """Keep only rows where current_price >= min_pct_of_52wk_high * fifty_two_week_high."""
+    if df is None or df.empty:
+        return df.copy()
+    if "fifty_two_week_high" not in df.columns:
+        return df.copy()
+    price_col = _resolve_price_column(df)
+    price = pd.to_numeric(df[price_col], errors="coerce")
+    h52 = pd.to_numeric(df["fifty_two_week_high"], errors="coerce")
+    mask = h52.isna() | (price >= min_pct_of_52wk_high * h52)
+    return df.loc[mask].copy()
+
+
 def apply_dollar_vol_filter(df: pd.DataFrame, min_dollar_vol: float) -> pd.DataFrame:
     if df is None or df.empty:
         return df.copy()

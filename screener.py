@@ -18,9 +18,11 @@ from fetcher import (
     get_tickers,
 )
 from filters import apply_52wk_high_filter, apply_dollar_vol_filter, apply_price_filter, compute_bounce
+from pipeline import build_screening_artifacts
 
 REFERENCE_TICKERS = ("QLD", "TQQQ")
 DEFAULT_EXCLUDED_SECTIONS = "biotechnology"
+PATTERN_LOOKBACK_DAYS = 180
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -69,7 +71,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _select_universe(universe: str) -> list[str]:
     if universe == "sp500":
-        return get_sp500_tickers()
+        return get_sp500_tickers(cache_path=Path("cache") / "sp500_tickers.txt")
     return get_tickers()
 
 
@@ -200,6 +202,20 @@ def _sort_results(df: pd.DataFrame, sort_key: str) -> pd.DataFrame:
     return df.sort_values(sort_column, ascending=False, na_position="last").reset_index(drop=True)
 
 
+def _needs_pattern_history(args: argparse.Namespace) -> bool:
+    return bool(args.patterns or args.chart or args.strategy)
+
+
+def _resolve_fetch_start(low_start: str, end_date: str, needs_pattern_history: bool) -> str:
+    if not needs_pattern_history:
+        return low_start
+
+    screen_start = pd.to_datetime(low_start)
+    pattern_start = pd.to_datetime(end_date) - pd.offsets.BDay(PATTERN_LOOKBACK_DAYS - 1)
+    fetch_start = screen_start if screen_start <= pattern_start else pattern_start
+    return fetch_start.date().isoformat()
+
+
 def _compute_benchmark_bounces(
     raw_df: pd.DataFrame, low_start: str, low_end: str, reference_tickers: tuple[str, ...] = REFERENCE_TICKERS
 ) -> dict[str, float]:
@@ -311,7 +327,7 @@ def _format_csv_ranking_for_output(ranked_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _slice_for_patterns(ticker: str, raw_df: pd.DataFrame) -> pd.DataFrame | None:
-    """Return last 90 trading days of OHLCV data for ticker as a DatetimeIndex DataFrame.
+    """Return last pattern lookback bars of OHLCV data for ticker as a DatetimeIndex DataFrame.
 
     Returns None if ticker is not present in raw_df.
     """
@@ -322,12 +338,12 @@ def _slice_for_patterns(ticker: str, raw_df: pd.DataFrame) -> pd.DataFrame | Non
         return None
     group = group.sort_values("Date")
     group["Date"] = pd.to_datetime(group["Date"])
-    group = group.set_index("Date").tail(90)
+    group = group.set_index("Date").tail(PATTERN_LOOKBACK_DAYS)
     return group[["Open", "High", "Low", "Close", "Volume"]]
 
 
 def _run_patterns(tickers: list[str], raw_df: pd.DataFrame) -> dict[str, list]:
-    """Run pattern detection on each ticker's last 90 days.
+    """Run pattern detection on each ticker's recent pattern lookback window.
 
     Returns dict mapping ticker -> list[PatternResult] (empty list on failure).
     """
@@ -356,7 +372,13 @@ def _handle_chart(ticker: str, raw_df: pd.DataFrame, show: bool = True):
     if df is None:
         return None
     patterns = detect_all(df, ticker)
-    setup = compute_strategy(patterns[0]) if patterns else None
+    setup = None
+    for pattern in patterns:
+        try:
+            setup = compute_strategy(pattern)
+            break
+        except ValueError:
+            continue
     return chart(ticker, df, patterns, setup=setup, show=show)
 
 
@@ -369,27 +391,54 @@ def _handle_strategy(ticker: str, raw_df: pd.DataFrame) -> list:
     if df is None:
         return []
     patterns = detect_all(df, ticker)
-    return [compute_strategy(pr) for pr in patterns if pr.pivots]
+    setups = []
+    for pattern in patterns:
+        if not pattern.pivots:
+            continue
+        try:
+            setups.append(compute_strategy(pattern))
+        except ValueError:
+            continue
+    return setups
 
 
 def run(args: argparse.Namespace) -> pd.DataFrame:
-    tickers = _with_reference_tickers(_select_universe(args.universe))
-    end_date = _today_market_date().isoformat()
-    raw_df = fetch_data(
-        tickers=tickers,
-        low_start=args.low_start,
-        end_date=end_date,
-        cache_dir=Path("cache"),
-        refresh=args.refresh,
-        db_path=Path("market_surge.db"),
-    )
-
     # Single-ticker modes: dispatch and return early
     if args.chart:
+        tickers = _with_reference_tickers(_select_universe(args.universe))
+        end_date = _today_market_date().isoformat()
+        fetch_start = _resolve_fetch_start(
+            low_start=args.low_start,
+            end_date=end_date,
+            needs_pattern_history=_needs_pattern_history(args),
+        )
+        raw_df = fetch_data(
+            tickers=tickers,
+            low_start=fetch_start,
+            end_date=end_date,
+            cache_dir=Path("cache"),
+            refresh=args.refresh,
+            db_path=Path("market_surge.db"),
+        )
         _handle_chart(args.chart, raw_df, show=True)
         return pd.DataFrame()
 
     if args.strategy:
+        tickers = _with_reference_tickers(_select_universe(args.universe))
+        end_date = _today_market_date().isoformat()
+        fetch_start = _resolve_fetch_start(
+            low_start=args.low_start,
+            end_date=end_date,
+            needs_pattern_history=_needs_pattern_history(args),
+        )
+        raw_df = fetch_data(
+            tickers=tickers,
+            low_start=fetch_start,
+            end_date=end_date,
+            cache_dir=Path("cache"),
+            refresh=args.refresh,
+            db_path=Path("market_surge.db"),
+        )
         setups = _handle_strategy(args.strategy, raw_df)
         for setup in setups:
             print(
@@ -398,16 +447,24 @@ def run(args: argparse.Namespace) -> pd.DataFrame:
             )
         return pd.DataFrame()
 
-    summary_all = _compute_summary(raw_df, low_start=args.low_start, low_end=args.low_end)
-    benchmark_bounces = _compute_benchmark_bounces(raw_df, low_start=args.low_start, low_end=args.low_end)
-    summary = _apply_benchmark_filter(summary_all, benchmark_bounces, mode=args.benchmark_mode)
-    metadata_by_ticker = get_ticker_metadata(
-        _with_reference_tickers(summary["Ticker"].tolist()),
-        db_path=Path("market_surge.db"),
+    artifacts = build_screening_artifacts(
+        universe=args.universe,
+        low_start=args.low_start,
+        low_end=args.low_end,
         refresh=args.refresh,
+        benchmark_mode=args.benchmark_mode,
+        needs_pattern_history=_needs_pattern_history(args),
+        cache_dir=Path("cache"),
+        db_path=Path("market_surge.db"),
+        select_universe_fn=_select_universe,
+        today_market_date_fn=_today_market_date,
+        fetch_data_fn=fetch_data,
+        metadata_fn=get_ticker_metadata,
     )
-    summary_all = _attach_metadata(summary_all, metadata_by_ticker)
-    summary = _attach_metadata(summary, metadata_by_ticker)
+    raw_df = artifacts.raw_df
+    summary_all = artifacts.summary_all
+    benchmark_bounces = artifacts.benchmark_bounces
+    summary = artifacts.summary
     summary = _apply_section_filter(summary, excluded_sections=_parse_excluded_sections(args.exclude_sections))
     filtered = apply_price_filter(summary, min_price=args.min_price)
     filtered = apply_52wk_high_filter(filtered, min_pct_of_52wk_high=args.min_pct_of_52wk_high)

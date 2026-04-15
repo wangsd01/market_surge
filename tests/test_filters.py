@@ -3,7 +3,7 @@ import logging
 import numpy as np
 import pandas as pd
 
-from filters import apply_dollar_vol_filter, apply_price_filter, compute_bounce
+from filters import apply_52wk_high_filter, apply_dollar_vol_filter, apply_price_filter, compute_bounce
 
 
 def test_compute_bounce_happy_path():
@@ -71,6 +71,36 @@ def test_dollar_vol_insufficient_history():
     filtered = apply_dollar_vol_filter(df, min_dollar_vol=50_000_000)
     assert list(filtered["Ticker"]) == ["AAA"]
     assert filtered["dollar_vol"].iloc[0] == 60_000_000
+
+
+def test_52wk_high_filter_keeps_above_threshold():
+    df = pd.DataFrame({"Ticker": ["AAA"], "current_price": [70.0], "fifty_two_week_high": [100.0]})
+    filtered = apply_52wk_high_filter(df, min_pct_of_52wk_high=0.70)
+    assert list(filtered["Ticker"]) == ["AAA"]
+
+
+def test_52wk_high_filter_keeps_exactly_at_threshold():
+    df = pd.DataFrame({"Ticker": ["AAA"], "current_price": [70.0], "fifty_two_week_high": [100.0]})
+    filtered = apply_52wk_high_filter(df, min_pct_of_52wk_high=0.70)
+    assert list(filtered["Ticker"]) == ["AAA"]
+
+
+def test_52wk_high_filter_drops_below_threshold():
+    df = pd.DataFrame({"Ticker": ["AAA"], "current_price": [69.9], "fifty_two_week_high": [100.0]})
+    filtered = apply_52wk_high_filter(df, min_pct_of_52wk_high=0.70)
+    assert filtered.empty
+
+
+def test_52wk_high_filter_passes_through_missing_52wk_high():
+    df = pd.DataFrame({"Ticker": ["AAA"], "current_price": [10.0], "fifty_two_week_high": [None]})
+    filtered = apply_52wk_high_filter(df, min_pct_of_52wk_high=0.70)
+    assert list(filtered["Ticker"]) == ["AAA"]
+
+
+def test_52wk_high_filter_no_column_passes_through():
+    df = pd.DataFrame({"Ticker": ["AAA"], "current_price": [10.0]})
+    filtered = apply_52wk_high_filter(df, min_pct_of_52wk_high=0.70)
+    assert list(filtered["Ticker"]) == ["AAA"]
 
 
 def test_sanity_check_extreme_bounce_logs_warning(caplog):

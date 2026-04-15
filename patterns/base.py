@@ -6,7 +6,7 @@ import pandas as pd
 
 @dataclass
 class PatternResult:
-    pattern: str            # "cup_handle", "double_bottom", "vcp", "channel", "support_resistance"
+    pattern: str            # "cup_handle", "double_bottom", "flat_base", "vcp", "channel", "support_resistance"
     ticker: str
     confidence: float       # 0.0–1.0 = conditions_met / total_conditions
     detected_on: date       # date of last bar in input df

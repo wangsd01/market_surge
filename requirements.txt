@@ -5,3 +5,5 @@ rich
 requests
 pytest
 lxml
+plotly
+scipy

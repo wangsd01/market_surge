@@ -27,6 +27,7 @@ from db import (
 
 SEC_TICKERS_URL = "https://www.sec.gov/files/company_tickers_exchange.json"
 SP500_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+SP500_CACHE_FILENAME = "sp500_tickers.txt"
 _FIELD_NAMES = {"Open", "High", "Low", "Close", "Adj Close", "Volume"}
 DEFAULT_SEC_USER_AGENT = "market-surge-screener/0.1 (contact: dev@example.com)"
 ALLOWED_EXCHANGES = {"NASDAQ", "NYSE", "CBOE"}
@@ -43,6 +44,22 @@ _BIOTECH_KEYWORDS = (
 )
 _BIOTECH_SIC_CODES = {2834, 2835, 2836}
 MARKET_TIMEZONE = ZoneInfo("America/New_York")
+
+
+class CacheMissError(RuntimeError):
+    def __init__(self, missing_tickers: list[str], low_start: str, end_date: str) -> None:
+        self.missing_tickers = missing_tickers
+        self.low_start = low_start
+        self.end_date = end_date
+        joined = ", ".join(missing_tickers) if missing_tickers else "<unknown>"
+        super().__init__(f"Cache miss for {joined} in requested range {low_start}..{end_date}")
+
+
+class UniverseCacheMissError(RuntimeError):
+    def __init__(self, universe: str, cache_path: str | Path) -> None:
+        self.universe = universe
+        self.cache_path = Path(cache_path)
+        super().__init__(f"Cached universe '{universe}' not found at {self.cache_path}")
 
 
 def _today_market_date():
@@ -178,7 +195,9 @@ def _extract_ticker_metadata_from_info(info: dict[str, object] | None) -> dict[s
         or _clean(payload.get("category"))
         or _clean(payload.get("fundFamily"))
     )
-    return {"sector": sector, "industry": industry}
+    raw_h52 = payload.get("fiftyTwoWeekHigh")
+    fifty_two_week_high = float(raw_h52) if raw_h52 is not None else None
+    return {"sector": sector, "industry": industry, "fifty_two_week_high": fifty_two_week_high}
 
 
 def _fetch_ticker_metadata_for_ticker(ticker: str) -> tuple[str, dict[str, str]]:
@@ -214,7 +233,7 @@ def get_ticker_metadata(
         conn.close()
 
 
-def get_sp500_tickers() -> list[str]:
+def get_sp500_tickers(cache_path: str | Path | None = None) -> list[str]:
     response = requests.get(
         SP500_URL,
         timeout=30,
@@ -233,7 +252,30 @@ def get_sp500_tickers() -> list[str]:
     # Yahoo uses '-' for class-share separators, e.g. BRK.B -> BRK-B
     symbols = symbols.str.replace(".", "-", regex=False)
     symbols = symbols[~symbols.str.contains("-", regex=False)]
-    return sorted(set(symbols.tolist()))
+    tickers = sorted(set(symbols.tolist()))
+    if cache_path is not None:
+        _write_cached_universe(cache_path, tickers)
+    return tickers
+
+
+def get_sp500_tickers_cached_only(cache_path: str | Path) -> list[str]:
+    cache_file = Path(cache_path)
+    if not cache_file.exists():
+        raise UniverseCacheMissError("sp500", cache_file)
+    tickers = [
+        line.strip().upper()
+        for line in cache_file.read_text().splitlines()
+        if line.strip()
+    ]
+    if not tickers:
+        raise UniverseCacheMissError("sp500", cache_file)
+    return sorted(set(tickers))
+
+
+def _write_cached_universe(cache_path: str | Path, tickers: list[str]) -> None:
+    cache_file = Path(cache_path)
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
+    cache_file.write_text("".join(f"{ticker}\n" for ticker in tickers))
 
 
 def reshape_download_frame(df: pd.DataFrame) -> pd.DataFrame:
@@ -382,5 +424,37 @@ def fetch_data(
             delete_invalid_tickers(conn, list(_observed_tickers(downloaded)), source=invalid_source)
             save_price_history(conn, downloaded)
         return get_cached_price_history(conn, ticker_list, low_start, end_date)
+    finally:
+        conn.close()
+
+
+def fetch_data_cached_only(
+    tickers: Sequence[str],
+    low_start: str,
+    end_date: str,
+    cache_dir: str | Path,
+    refresh: bool = False,
+    db_path: str | Path | None = None,
+) -> pd.DataFrame:
+    cache_root = Path(cache_dir)
+    cache_root.mkdir(parents=True, exist_ok=True)
+    sqlite_path = Path(db_path) if db_path is not None else (cache_root / "raw_cache.db")
+    conn = init_db(sqlite_path)
+    try:
+        _ = refresh
+        delete_price_history_for_date(conn, _today_market_date().isoformat())
+        invalid_source = "yfinance"
+        known_invalid = get_invalid_tickers(conn, invalid_source)
+        ticker_list = [
+            ticker
+            for ticker in dict.fromkeys(str(symbol).strip().upper() for symbol in tickers if str(symbol).strip())
+            if ticker not in known_invalid
+        ]
+        cached = get_cached_price_history(conn, ticker_list, low_start, end_date)
+        covered_tickers = get_tickers_with_cached_coverage(conn, ticker_list, low_start, end_date)
+        missing = [ticker for ticker in ticker_list if ticker not in covered_tickers]
+        if missing:
+            raise CacheMissError(missing, low_start=low_start, end_date=end_date)
+        return cached
     finally:
         conn.close()

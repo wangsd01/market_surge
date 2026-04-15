@@ -1,9 +1,10 @@
 import sqlite3
 
 import pandas as pd
+import pytest
 
 from db import get_cached_price_history, get_invalid_tickers, has_cached_coverage, init_db, save_price_history
-from fetcher import fetch_data
+from fetcher import CacheMissError, fetch_data, fetch_data_cached_only
 
 
 def _sample_prices() -> pd.DataFrame:
@@ -59,6 +60,79 @@ def test_fetch_data_uses_sqlite_cache_without_download(tmp_path, monkeypatch):
     assert not called["downloaded"]
     assert len(out) == 2
     assert list(out["Ticker"].unique()) == ["AAPL"]
+
+
+def test_fetch_data_cached_only_uses_sqlite_cache_without_download(tmp_path, monkeypatch):
+    db_path = tmp_path / "raw_cache.db"
+    conn = init_db(db_path)
+    save_price_history(conn, _sample_prices())
+    conn.close()
+
+    called = {"downloaded": False}
+
+    def _should_not_download(*_args, **_kwargs):
+        called["downloaded"] = True
+        raise AssertionError("Cache-only fetch must not download")
+
+    monkeypatch.setattr("fetcher._download_all_batches", _should_not_download)
+
+    out = fetch_data_cached_only(
+        tickers=["AAPL"],
+        low_start="2026-04-01",
+        end_date="2026-04-03",
+        cache_dir=tmp_path,
+    )
+
+    assert not called["downloaded"]
+    assert len(out) == 2
+    assert list(out["Ticker"].unique()) == ["AAPL"]
+
+
+def test_fetch_data_cached_only_raises_cache_miss_without_download(tmp_path, monkeypatch):
+    called = {"downloaded": False}
+
+    def _should_not_download(*_args, **_kwargs):
+        called["downloaded"] = True
+        raise AssertionError("Cache-only fetch must not download")
+
+    monkeypatch.setattr("fetcher._download_all_batches", _should_not_download)
+
+    with pytest.raises(CacheMissError) as excinfo:
+        fetch_data_cached_only(
+            tickers=["AAPL"],
+            low_start="2026-04-01",
+            end_date="2026-04-03",
+            cache_dir=tmp_path,
+        )
+
+    assert not called["downloaded"]
+    assert excinfo.value.missing_tickers == ["AAPL"]
+
+
+def test_fetch_data_cached_only_raises_on_partial_range_without_download(tmp_path, monkeypatch):
+    db_path = tmp_path / "raw_cache.db"
+    conn = init_db(db_path)
+    save_price_history(conn, _sample_prices().iloc[:1].copy())
+    conn.close()
+
+    called = {"downloaded": False}
+
+    def _should_not_download(*_args, **_kwargs):
+        called["downloaded"] = True
+        raise AssertionError("Cache-only fetch must not download")
+
+    monkeypatch.setattr("fetcher._download_all_batches", _should_not_download)
+
+    with pytest.raises(CacheMissError) as excinfo:
+        fetch_data_cached_only(
+            tickers=["AAPL"],
+            low_start="2026-04-01",
+            end_date="2026-04-03",
+            cache_dir=tmp_path,
+        )
+
+    assert not called["downloaded"]
+    assert excinfo.value.missing_tickers == ["AAPL"]
 
 
 def test_fetch_data_cache_miss_downloads_and_persists_sqlite(tmp_path, monkeypatch):

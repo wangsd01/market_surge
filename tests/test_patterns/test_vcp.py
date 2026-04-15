@@ -132,6 +132,17 @@ class TestVCPDetector:
         if result is not None:
             assert result.confidence < 1.0
 
+    def test_requires_broader_trend_template_alignment(self, make_ohlcv):
+        """A shrinking-contraction sequence below the long-term trend should be rejected."""
+        prefix = list(np.linspace(170, 91, 120))
+        prices = prefix + VALID_PRICES
+        volumes = [1_000_000] * len(prefix) + VALID_VOLUMES
+        df = make_ohlcv(prices, volumes)
+
+        result = VCPDetector().detect(df, "TEST")
+
+        assert result is None
+
     def test_no_network_calls(self, make_ohlcv, monkeypatch):
         """Detector must not make any network calls."""
         import urllib.request

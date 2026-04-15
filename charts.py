@@ -10,6 +10,7 @@ from plotly.subplots import make_subplots
 from patterns.base import PatternResult
 
 if TYPE_CHECKING:
+    from decision_tickets import DecisionTicket
     from strategies import TradeSetup
 
 logger = logging.getLogger(__name__)
@@ -20,6 +21,7 @@ def chart(
     df: pd.DataFrame,
     patterns: list[PatternResult],
     setup: "TradeSetup | None" = None,
+    ticket: "DecisionTicket | None" = None,
     show: bool = True,
 ) -> go.Figure:
     """Render candlestick chart with pattern overlays and optional strategy levels.
@@ -135,12 +137,35 @@ def chart(
             annotations.append(dict(
                 x=dates[0],
                 y=price,
-                text=f"{level_name}: {price:.2f}",
+                text=_strategy_level_text(level_name, price, setup),
                 showarrow=False,
                 xanchor="left",
                 font=dict(size=9, color=color),
                 xref="x", yref="y",
             ))
+
+    if ticket is not None:
+        annotations.append(
+            dict(
+                x=0.99,
+                y=0.99,
+                xref="paper",
+                yref="paper",
+                text=(
+                    f"shares: {ticket.shares}<br>"
+                    f"position value: {ticket.position_value:.2f}<br>"
+                    f"risk value: {ticket.risk_value:.2f}"
+                ),
+                showarrow=False,
+                xanchor="right",
+                yanchor="top",
+                align="left",
+                font=dict(size=10, color="black"),
+                bgcolor="rgba(255,255,255,0.85)",
+                bordercolor="rgba(0,0,0,0.2)",
+                borderpad=6,
+            )
+        )
 
     fig.update_layout(
         title=dict(text=ticker),
@@ -154,3 +179,12 @@ def chart(
         fig.show()
 
     return fig
+
+
+def _strategy_level_text(level_name: str, price: float, setup: "TradeSetup") -> str:
+    if level_name == "stop":
+        return f"stop: {price:.2f} (-{setup.risk_pct * 100.0:.2f}%)"
+    if level_name == "target":
+        gain_pct = ((setup.target - setup.entry) / setup.entry) * 100.0 if setup.entry > 0 else 0.0
+        return f"target: {price:.2f} (+{gain_pct:.2f}%)"
+    return f"{level_name}: {price:.2f}"

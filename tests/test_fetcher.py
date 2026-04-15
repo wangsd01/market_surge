@@ -1,9 +1,12 @@
 import pandas as pd
+import pytest
 
 from fetcher import (
     BIOTECH_SECTION,
     DEFAULT_SECTION,
+    UniverseCacheMissError,
     _extract_ticker_metadata_from_info,
+    get_sp500_tickers_cached_only,
     get_ticker_sections,
     get_tickers,
     reshape_download_frame,
@@ -189,7 +192,7 @@ def test_extract_ticker_metadata_from_equity_info():
         }
     )
 
-    assert metadata == {"sector": "Technology", "industry": "Semiconductors"}
+    assert metadata == {"sector": "Technology", "industry": "Semiconductors", "fifty_two_week_high": None}
 
 
 def test_extract_ticker_metadata_from_etf_info_uses_type_and_category():
@@ -202,4 +205,18 @@ def test_extract_ticker_metadata_from_etf_info_uses_type_and_category():
         }
     )
 
-    assert metadata == {"sector": "ETF", "industry": "Trading--Leveraged Equity"}
+    assert metadata == {"sector": "ETF", "industry": "Trading--Leveraged Equity", "fifty_two_week_high": None}
+
+
+def test_get_sp500_tickers_cached_only_reads_local_cache(tmp_path):
+    cache_path = tmp_path / "sp500_tickers.txt"
+    cache_path.write_text("MSFT\nAAPL\n")
+
+    tickers = get_sp500_tickers_cached_only(cache_path)
+
+    assert tickers == ["AAPL", "MSFT"]
+
+
+def test_get_sp500_tickers_cached_only_raises_when_missing(tmp_path):
+    with pytest.raises(UniverseCacheMissError):
+        get_sp500_tickers_cached_only(tmp_path / "missing.txt")

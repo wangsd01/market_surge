@@ -5,6 +5,8 @@ from datetime import date
 
 from patterns.base import PatternResult
 from charts import chart
+from decision_tickets import DecisionTicket
+from strategies import TradeSetup
 
 
 def _make_pattern(pattern: str = "cup_handle", confidence: float = 0.8) -> PatternResult:
@@ -144,3 +146,111 @@ class TestChart:
         prices = [100.0 + i * 0.1 for i in range(60)]
         df = make_ohlcv(prices)
         chart("TEST", df, [], show=False)
+
+    def test_strategy_annotations_include_risk_and_target_percentages(self, make_ohlcv):
+        prices = [100.0 + i * 0.1 for i in range(60)]
+        df = make_ohlcv(prices)
+        setup = TradeSetup(
+            pattern="cup_handle",
+            ticker="TEST",
+            entry=10.0,
+            stop=9.0,
+            target=12.0,
+            risk_per_share=1.0,
+            risk_reward=2.0,
+            risk_pct=0.1,
+            invalidation_rule="invalid if price trades below stop",
+        )
+        fig = chart("TEST", df, [_make_pattern()], setup=setup, show=False)
+        annotation_texts = [a.text for a in (fig.layout.annotations or [])]
+
+        assert any("entry: 10.00" in (text or "") for text in annotation_texts)
+        assert any("stop: 9.00 (-10.00%)" in (text or "") for text in annotation_texts)
+        assert any("target: 12.00 (+20.00%)" in (text or "") for text in annotation_texts)
+
+    def test_ticket_annotations_include_position_metrics(self, make_ohlcv):
+        prices = [100.0 + i * 0.1 for i in range(60)]
+        df = make_ohlcv(prices)
+        setup = TradeSetup(
+            pattern="cup_handle",
+            ticker="TEST",
+            entry=10.0,
+            stop=9.0,
+            target=12.0,
+            risk_per_share=1.0,
+            risk_reward=2.0,
+            risk_pct=0.1,
+            invalidation_rule="invalid if price trades below stop",
+        )
+        ticket = DecisionTicket(
+            rank=1,
+            ticker="TEST",
+            pattern="cup_handle",
+            entry=10.0,
+            stop=9.0,
+            target=12.0,
+            risk_per_share=1.0,
+            shares=100,
+            position_value=1000.0,
+            score=0.87,
+            summary_reason="clean setup",
+            invalidation_rule="invalid if price trades below stop",
+            sizing_basis={
+                "account_size": 10_000.0,
+                "risk_pct": 0.01,
+                "risk_dollars": 100.0,
+                "max_position_dollars": None,
+            },
+        )
+        fig = chart("TEST", df, [_make_pattern()], setup=setup, ticket=ticket, show=False)
+        annotation_texts = [a.text for a in (fig.layout.annotations or [])]
+
+        assert any("shares: 100" in (text or "") for text in annotation_texts)
+        assert any("position value: 1000.00" in (text or "") for text in annotation_texts)
+        assert any("risk value: 100.00" in (text or "") for text in annotation_texts)
+
+    def test_ticket_metrics_annotation_is_grouped_top_right(self, make_ohlcv):
+        prices = [100.0 + i * 0.1 for i in range(60)]
+        df = make_ohlcv(prices)
+        setup = TradeSetup(
+            pattern="cup_handle",
+            ticker="TEST",
+            entry=10.0,
+            stop=9.0,
+            target=12.0,
+            risk_per_share=1.0,
+            risk_reward=2.0,
+            risk_pct=0.1,
+            invalidation_rule="invalid if price trades below stop",
+        )
+        ticket = DecisionTicket(
+            rank=1,
+            ticker="TEST",
+            pattern="cup_handle",
+            entry=10.0,
+            stop=9.0,
+            target=12.0,
+            risk_per_share=1.0,
+            shares=100,
+            position_value=1000.0,
+            score=0.87,
+            summary_reason="clean setup",
+            invalidation_rule="invalid if price trades below stop",
+            sizing_basis={
+                "account_size": 10_000.0,
+                "risk_pct": 0.01,
+                "risk_dollars": 100.0,
+                "max_position_dollars": None,
+            },
+        )
+        fig = chart("TEST", df, [_make_pattern()], setup=setup, ticket=ticket, show=False)
+
+        grouped = [
+            a for a in (fig.layout.annotations or [])
+            if "shares:" in (a.text or "") and "position value:" in (a.text or "")
+        ]
+
+        assert len(grouped) == 1
+        assert grouped[0].xref == "paper"
+        assert grouped[0].yref == "paper"
+        assert grouped[0].x >= 0.9
