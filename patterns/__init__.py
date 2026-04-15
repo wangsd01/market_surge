@@ -1,19 +1,20 @@
 import pandas as pd
 
 from patterns.base import PatternResult
-from patterns.cup_handle import CupHandleDetector
-from patterns.double_bottom import DoubleBottomDetector
-from patterns.vcp import VCPDetector
-from patterns.channel import ChannelDetector
-from patterns.support_resistance import SupportResistanceDetector
 
-_DETECTORS = [
-    CupHandleDetector(),
-    DoubleBottomDetector(),
-    VCPDetector(),
-    ChannelDetector(),
-    SupportResistanceDetector(),
-]
+
+def _build_detectors():
+    from patterns.cup_handle import CupHandleDetector
+    from patterns.double_bottom import DoubleBottomDetector
+    from patterns.flat_base import FlatBaseDetector
+    from patterns.vcp import VCPDetector
+
+    return [
+        CupHandleDetector(),
+        DoubleBottomDetector(),
+        FlatBaseDetector(),
+        VCPDetector(),
+    ]
 
 
 def detect_all(df: pd.DataFrame, ticker: str) -> list[PatternResult]:
@@ -25,7 +26,7 @@ def detect_all(df: pd.DataFrame, ticker: str) -> list[PatternResult]:
     if len(df) < 45:
         return []
     results = []
-    for detector in _DETECTORS:
+    for detector in _build_detectors():
         result = detector.detect(df, ticker)
         if result is not None:
             results.append(result)
