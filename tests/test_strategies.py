@@ -59,6 +59,30 @@ INVALID_SR_RESULT = _result(
               "touch_count_1": 3, "touch_count_2": 2, "touch_count_3": 2},
 )
 
+HIGH2_RESULT = _result(
+    "high2",
+    {
+        "prior_swing_high": 120.0,
+        "pullback_low": 110.0,
+        "h1_high": 118.0,
+        "h2_high": 119.0,
+        "h2_low": 114.0,
+    },
+    metadata={"prior_leg_height": 12.0},
+)
+
+HIGH2_NEAR_SWING_RESULT = _result(
+    "high2",
+    {
+        "prior_swing_high": 119.0,
+        "pullback_low": 110.0,
+        "h1_high": 118.0,
+        "h2_high": 118.95,
+        "h2_low": 114.0,
+    },
+    metadata={"prior_leg_height": 12.0},
+)
+
 
 class TestTradeSetup:
 
@@ -170,18 +194,45 @@ class TestTradeSetup:
     def test_risk_reward_matches_pattern_table(self):
         """Risk/reward ratio must match the RISK_REWARD lookup table."""
         from strategies import RISK_REWARD
-        for pr in [CUP_RESULT, DOUBLE_RESULT, VCP_RESULT, FLAT_BASE_RESULT, CHANNEL_RESULT, SR_RESULT]:
+        for pr in [CUP_RESULT, DOUBLE_RESULT, VCP_RESULT, FLAT_BASE_RESULT, CHANNEL_RESULT, SR_RESULT, HIGH2_RESULT]:
             result = strategy(pr)
             assert result.risk_reward == RISK_REWARD[pr.pattern]
 
     def test_entry_always_above_stop(self):
         """Entry must always be above stop for all patterns."""
-        for pr in [CUP_RESULT, DOUBLE_RESULT, VCP_RESULT, FLAT_BASE_RESULT, CHANNEL_RESULT, SR_RESULT]:
+        for pr in [CUP_RESULT, DOUBLE_RESULT, VCP_RESULT, FLAT_BASE_RESULT, CHANNEL_RESULT, SR_RESULT, HIGH2_RESULT]:
             result = strategy(pr)
             assert result.entry > result.stop, f"entry <= stop for {pr.pattern}"
 
     def test_target_always_above_entry(self):
         """Target must always be above entry for all patterns."""
-        for pr in [CUP_RESULT, DOUBLE_RESULT, VCP_RESULT, FLAT_BASE_RESULT, CHANNEL_RESULT, SR_RESULT]:
+        for pr in [CUP_RESULT, DOUBLE_RESULT, VCP_RESULT, FLAT_BASE_RESULT, CHANNEL_RESULT, SR_RESULT, HIGH2_RESULT]:
             result = strategy(pr)
             assert result.target > result.entry, f"target <= entry for {pr.pattern}"
+
+    def test_high2_uses_h2_high_as_breakout(self):
+        result = strategy(HIGH2_RESULT)
+        assert abs(result.entry - (119.0 * 1.0005)) < 0.001
+
+    def test_high2_uses_pullback_low_as_stop(self):
+        result = strategy(HIGH2_RESULT)
+        assert result.stop == 110.0
+
+    def test_high2_uses_custom_target_branch(self):
+        result = strategy(HIGH2_RESULT)
+        expected_entry = 119.0 * 1.0005
+        expected_risk = expected_entry - 110.0
+        expected_target = max(120.0, expected_entry + expected_risk * 2.0, expected_entry + 12.0)
+        assert abs(result.target - expected_target) < 0.001
+
+    def test_high2_excludes_prior_swing_target_when_too_close_to_entry(self):
+        result = strategy(HIGH2_NEAR_SWING_RESULT)
+        expected_entry = 118.95 * 1.0005
+        expected_risk = expected_entry - 110.0
+        expected_target = max(expected_entry + expected_risk * 2.0, expected_entry + 12.0)
+        assert abs(result.target - expected_target) < 0.001
+
+    def test_high2_realized_reward_to_risk_is_at_least_two(self):
+        result = strategy(HIGH2_RESULT)
+        realized_rr = (result.target - result.entry) / (result.entry - result.stop)
+        assert realized_rr >= 2.0 - 1e-9

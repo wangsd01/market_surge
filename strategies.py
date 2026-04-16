@@ -12,6 +12,7 @@ RISK_REWARD: dict[str, float] = {
     "vcp": 2.5,
     "double_bottom": 2.0,
     "flat_base": 2.0,
+    "high2": 2.0,
     "channel": 2.0,
     "support_resistance": 2.0,
 }
@@ -36,7 +37,7 @@ def strategy(result: PatternResult) -> TradeSetup:
     entry = _entry_price(result.pattern, breakout)
     rr = RISK_REWARD[result.pattern]
     risk_per_share = entry - stop
-    target = entry + risk_per_share * rr
+    target = _target_price(result, entry, stop, rr)
     risk_pct = risk_per_share / entry
     return TradeSetup(
         pattern=result.pattern,
@@ -113,4 +114,25 @@ def _levels(result: PatternResult) -> tuple[float, float]:
             raise ValueError("support/resistance setup requires breakout above stop")
         return breakout, stop
 
+    if p == "high2":
+        return pivots["h2_high"], pivots["pullback_low"]
+
     raise ValueError(f"Unknown pattern: {p}")
+
+
+def _target_price(result: PatternResult, entry: float, stop: float, rr: float) -> float:
+    if result.pattern != "high2":
+        risk_per_share = entry - stop
+        return entry + risk_per_share * rr
+
+    prior_leg_height = float(result.metadata.get("prior_leg_height", 0.0))
+    if prior_leg_height <= 0:
+        raise ValueError("high2 setup requires prior_leg_height metadata")
+
+    prior_swing_high = float(result.pivots["prior_swing_high"])
+    risk_per_share = entry - stop
+    minimum_rr_target = entry + risk_per_share * rr
+    measured_move_target = entry + prior_leg_height
+    if prior_swing_high > entry * 1.01:
+        return max(prior_swing_high, minimum_rr_target, measured_move_target)
+    return max(minimum_rr_target, measured_move_target)

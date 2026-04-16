@@ -7,12 +7,14 @@ def _build_detectors():
     from patterns.cup_handle import CupHandleDetector
     from patterns.double_bottom import DoubleBottomDetector
     from patterns.flat_base import FlatBaseDetector
+    from patterns.high2 import High2Detector
     from patterns.vcp import VCPDetector
 
     return [
         CupHandleDetector(),
         DoubleBottomDetector(),
         FlatBaseDetector(),
+        High2Detector(),
         VCPDetector(),
     ]
 

@@ -126,6 +126,30 @@ def _recent_pattern_with_last_pivot(ticker: str, pivot_day: date, pattern: str =
     )
 
 
+def _high2_pattern_result(ticker: str, pivot_day: date) -> PatternResult:
+    return PatternResult(
+        pattern="high2",
+        ticker=ticker,
+        confidence=0.88,
+        detected_on=pivot_day,
+        pivots={
+            "prior_swing_high": 120.0,
+            "pullback_low": 110.0,
+            "h1_high": 118.0,
+            "h2_high": 119.0,
+            "h2_low": 114.0,
+        },
+        pivot_dates={
+            "prior_swing_high": date(2025, 4, 1),
+            "pullback_low": date(2025, 4, 8),
+            "h1_high": date(2025, 4, 9),
+            "h2_high": pivot_day,
+            "h2_low": pivot_day,
+        },
+        metadata={"prior_leg_height": 12.0},
+    )
+
+
 def test_build_parser_supports_decision_ticket_flags():
     parser = main.build_parser()
     args = parser.parse_args(
@@ -300,6 +324,36 @@ def test_build_candidates_filters_out_stale_patterns(monkeypatch):
     candidates = main.build_candidates(artifacts, args)
 
     assert candidates == []
+
+
+def test_build_candidates_includes_recent_high2_patterns(monkeypatch):
+    raw_df = _raw_df_long("AAA", periods=80)
+    summary = pd.DataFrame(
+        {
+            "Ticker": ["AAA"],
+            "current_price": [120.0],
+            "bounce_pct": [30.0],
+            "avg_vol_50d": [1_000_000.0],
+            "fifty_two_week_high": [140.0],
+            "sector": ["Technology"],
+            "industry": ["Semiconductors"],
+        }
+    )
+    artifacts = ScreeningArtifacts(
+        raw_df=raw_df,
+        summary_all=summary,
+        summary=summary,
+        benchmark_bounces={},
+    )
+
+    monkeypatch.setattr("patterns.detect_all", lambda df, ticker: [_high2_pattern_result(ticker, date(2025, 4, 10))])
+
+    args = main.build_parser().parse_args(["--account-size", "10000", "--risk-pct", "0.01", "--max-loss-pct", "0.20"])
+
+    candidates = main.build_candidates(artifacts, args)
+
+    assert len(candidates) == 1
+    assert candidates[0].pattern == "high2"
 
 
 def test_is_recent_pattern_result_keeps_patterns_within_ten_trading_days():
