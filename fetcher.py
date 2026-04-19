@@ -129,7 +129,8 @@ def get_tickers() -> list[str]:
         except (TypeError, ValueError):
             continue
         if sic == 6500 or 6700 <= sic <= 6799:
-            out.append(ticker)
+            continue  # skip REITs and shell holding companies
+        out.append(ticker)
     return sorted(set(out))
 
 

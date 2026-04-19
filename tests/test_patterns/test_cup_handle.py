@@ -1,3 +1,6 @@
+from datetime import date
+
+import pandas as pd
 import pytest
 from patterns.cup_handle import CupHandleDetector
 from patterns.base import PatternResult
@@ -150,9 +153,30 @@ class TestCupHandleDetector:
         # Should not raise AssertionError
         CupHandleDetector().detect(df, "TEST")
 
+    def test_rejects_post_breakout_bar_as_handle_high_when_above_left_high(self, make_ohlcv):
+        """A post-breakout high above the left lip is not the cup handle high."""
+        prices = (
+            [96, 98, 100, 99, 98]
+            + [96, 93, 90, 87, 84, 82, 79, 77, 76, 75]
+            + [75, 75, 75, 76, 77, 78, 79, 81, 83, 85]
+            + [87, 89, 91, 92, 93, 94, 95, 96, 96, 96]
+            + [95, 93, 91, 90, 90, 91, 92, 93, 94, 95]
+            + [100, 110, 109, 108, 108, 109, 109, 109]
+        )
+        volumes = [1_000_000] * 35 + [900_000, 800_000, 700_000, 650_000, 600_000, 580_000, 590_000, 600_000, 620_000, 650_000] + [1_000_000] * 8
+        df = make_ohlcv(prices, volumes)
+
+        result = CupHandleDetector().detect(df, "TEST")
+
+        assert result is not None
+        assert result.pivots["handle_high"] <= result.pivots["left_high"]
+        assert result.pivots["right_high"] <= result.pivots["left_high"]
+
 
 # ---------------------------------------------------------------------------
-# POWL real-world case: cup 02/12/26–03/25/26, handle 03/25/26–04/07/26
+# POWL geometry regression. This approximates the real shape, but because it
+# uses make_ohlcv()'s synthetic business-day index it does not pin the actual
+# 2026 cup/handle dates.
 # ---------------------------------------------------------------------------
 # Approximate price structure (trading days, not calendar days):
 #   10 days pre-cup  → left_high = 200
@@ -180,6 +204,62 @@ _POWL_VOLS = (
        1_000_000, 1_050_000, 1_100_000, 1_150_000]
 )
 _POWL_VOLS_WITH_BREAKOUT = _POWL_VOLS + [3_000_000] * 9
+
+
+def _make_dated_ohlcv(
+    dates: pd.DatetimeIndex, prices: list[float], volumes: list[int]
+) -> pd.DataFrame:
+    """Deterministic OHLCV with an explicit business-day index."""
+    assert len(dates) == len(prices) == len(volumes)
+    closes = pd.Series(prices, dtype=float)
+    return pd.DataFrame(
+        {
+            "Open": closes.shift(1).fillna(closes.iloc[0]).to_numpy(),
+            "High": (closes * 1.005).to_numpy(),
+            "Low": (closes * 0.995).to_numpy(),
+            "Close": closes.to_numpy(),
+            "Volume": volumes,
+        },
+        index=dates,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Exact-dated POWL regression: cup 2026-02-12–2026-03-25,
+# handle 2026-03-25–2026-04-07.
+# ---------------------------------------------------------------------------
+_POWL_EXACT_PRE_DATES = pd.date_range("2026-02-03", "2026-02-11", freq="B")
+_POWL_EXACT_CUP_DATES = pd.date_range("2026-02-12", "2026-03-25", freq="B")
+_POWL_EXACT_HANDLE_DATES = pd.date_range("2026-03-26", "2026-04-07", freq="B")
+_POWL_EXACT_BREAKOUT_DATES = pd.date_range("2026-04-08", "2026-04-17", freq="B")
+
+_POWL_EXACT_PRE = [196, 197, 198, 199, 198, 199, 199]
+_POWL_EXACT_CUP = [
+    200, 197, 193, 189, 185, 181, 177, 173, 169, 165,
+    162, 160, 159, 158, 158, 159, 160, 161, 162,
+    166, 170, 174, 178, 182, 186, 190, 193, 194, 195, 196,
+]
+_POWL_EXACT_HANDLE = [194, 191, 188, 186, 186, 187, 189, 191, 193]
+_POWL_EXACT_BREAKOUT = [196, 199, 202, 205, 208, 210, 208, 209]
+
+_POWL_EXACT_DATES = (
+    _POWL_EXACT_PRE_DATES
+    .append(_POWL_EXACT_CUP_DATES)
+    .append(_POWL_EXACT_HANDLE_DATES)
+)
+_POWL_EXACT_DATES_WITH_BREAKOUT = _POWL_EXACT_DATES.append(
+    _POWL_EXACT_BREAKOUT_DATES
+)
+_POWL_EXACT_PRICES = _POWL_EXACT_PRE + _POWL_EXACT_CUP + _POWL_EXACT_HANDLE
+_POWL_EXACT_PRICES_WITH_BREAKOUT = _POWL_EXACT_PRICES + _POWL_EXACT_BREAKOUT
+_POWL_EXACT_VOLS = (
+    [2_000_000] * (len(_POWL_EXACT_PRE) + len(_POWL_EXACT_CUP))
+    + [1_800_000, 1_600_000, 1_400_000, 1_200_000, 1_100_000,
+       1_000_000, 1_050_000, 1_100_000, 1_150_000]
+)
+_POWL_EXACT_VOLS_WITH_BREAKOUT = _POWL_EXACT_VOLS + [3_000_000] * len(
+    _POWL_EXACT_BREAKOUT
+)
 
 
 class TestPOWLCupHandle:
@@ -214,3 +294,33 @@ class TestPOWLCupHandle:
             "handle_low > handle_high — detector mistook the breakout for right_high "
             "and has no real downward handle remaining"
         )
+
+    def test_exact_dates_when_df_ends_at_handle_end(self):
+        """The exact POWL dates should be detectable on the handle-end bar."""
+        df = _make_dated_ohlcv(
+            _POWL_EXACT_DATES,
+            _POWL_EXACT_PRICES,
+            _POWL_EXACT_VOLS,
+        )
+        result = CupHandleDetector().detect(df, "POWL")
+
+        assert result is not None
+        assert result.pivot_dates["left_high"] == date(2026, 2, 12)
+        assert result.pivot_dates["right_high"] == date(2026, 3, 25)
+        assert result.detected_on == date(2026, 4, 7)
+        assert result.pivots["handle_low"] < result.pivots["handle_high"]
+
+    def test_exact_dates_hold_with_post_breakout_data(self):
+        """Post-breakout data must not move the POWL right lip past 03/25."""
+        df = _make_dated_ohlcv(
+            _POWL_EXACT_DATES_WITH_BREAKOUT,
+            _POWL_EXACT_PRICES_WITH_BREAKOUT,
+            _POWL_EXACT_VOLS_WITH_BREAKOUT,
+        )
+        result = CupHandleDetector().detect(df, "POWL")
+
+        assert result is not None
+        assert result.pivot_dates["left_high"] == date(2026, 2, 12)
+        assert result.pivot_dates["right_high"] == date(2026, 3, 25)
+        assert result.detected_on == date(2026, 4, 17)
+        assert result.pivot_dates["handle_low"] == date(2026, 3, 31)

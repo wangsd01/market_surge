@@ -126,6 +126,60 @@ def _recent_pattern_with_last_pivot(ticker: str, pivot_day: date, pattern: str =
     )
 
 
+def _confirmed_double_bottom_result(ticker: str, breakout_day: date) -> PatternResult:
+    return PatternResult(
+        pattern="double_bottom",
+        ticker=ticker,
+        confidence=0.95,
+        detected_on=breakout_day,
+        pivots={
+            "left_high": 120.0,
+            "first_trough": 90.0,
+            "middle_high": 105.0,
+            "second_trough": 88.0,
+            "breakout": 106.0,
+        },
+        pivot_dates={
+            "left_high": date(2025, 1, 10),
+            "first_trough": date(2025, 1, 24),
+            "middle_high": date(2025, 2, 18),
+            "second_trough": date(2025, 3, 12),
+            "breakout": breakout_day,
+        },
+        metadata={"state": "confirmed", "buy_point": 105.0},
+    )
+
+
+def _active_pre_breakout_double_bottom_result(
+    ticker: str,
+    *,
+    active_zone_pct_below_buy_point: float,
+) -> PatternResult:
+    return PatternResult(
+        pattern="double_bottom",
+        ticker=ticker,
+        confidence=0.88,
+        detected_on=date(2025, 4, 14),
+        pivots={
+            "left_high": 120.0,
+            "first_trough": 90.0,
+            "middle_high": 105.0,
+            "second_trough": 88.0,
+        },
+        pivot_dates={
+            "left_high": date(2025, 1, 10),
+            "first_trough": date(2025, 1, 24),
+            "middle_high": date(2025, 2, 18),
+            "second_trough": date(2025, 3, 12),
+        },
+        metadata={
+            "state": "active_pre_breakout",
+            "buy_point": 105.0,
+            "active_zone_pct_below_buy_point": active_zone_pct_below_buy_point,
+        },
+    )
+
+
 def _high2_pattern_result(ticker: str, pivot_day: date) -> PatternResult:
     return PatternResult(
         pattern="high2",
@@ -370,6 +424,33 @@ def test_is_recent_pattern_result_rejects_patterns_older_than_ten_trading_days()
     assert main._is_recent_pattern_result(pattern_result, latest_date=latest_date) is False
 
 
+def test_is_recent_pattern_result_uses_breakout_date_for_confirmed_double_bottom():
+    latest_date = date(2025, 4, 14)
+    pattern_result = _confirmed_double_bottom_result("AAA", date(2025, 4, 3))
+
+    assert main._is_recent_pattern_result(pattern_result, latest_date=latest_date) is True
+
+
+def test_is_recent_pattern_result_treats_active_pre_breakout_double_bottom_as_current():
+    latest_date = date(2025, 4, 14)
+    pattern_result = _active_pre_breakout_double_bottom_result(
+        "AAA",
+        active_zone_pct_below_buy_point=0.08,
+    )
+
+    assert main._is_recent_pattern_result(pattern_result, latest_date=latest_date) is True
+
+
+def test_is_recent_pattern_result_rejects_inactive_pre_breakout_double_bottom():
+    latest_date = date(2025, 4, 14)
+    pattern_result = _active_pre_breakout_double_bottom_result(
+        "AAA",
+        active_zone_pct_below_buy_point=0.12,
+    )
+
+    assert main._is_recent_pattern_result(pattern_result, latest_date=latest_date) is False
+
+
 def test_run_saves_chart_files_for_ranked_tickets(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     tickers = ["AAA", "BBB"]
@@ -409,14 +490,17 @@ def test_run_saves_chart_files_for_ranked_tickets(monkeypatch, tmp_path):
 
     tickets = main.run(args)
 
+    run_dirs = list((tmp_path / "runs").iterdir())
+    assert len(run_dirs) == 1
+    ts = run_dirs[0].name
     assert [ticket.ticker for ticket in tickets] == ["AAA", "BBB"]
     assert [call["ticker"] for call in chart_calls] == ["AAA", "BBB"]
     assert all(call["show"] is False for call in chart_calls)
     assert all(call["setup"] is not None for call in chart_calls)
     assert [call["ticket"].ticker for call in chart_calls] == ["AAA", "BBB"]
     assert [Path(call["path"]) for call in chart_calls] == [
-        Path("charts/01_AAA_cup_handle.html"),
-        Path("charts/02_BBB_cup_handle.html"),
+        Path("runs") / ts / "charts" / "01_AAA_cup_handle.html",
+        Path("runs") / ts / "charts" / "02_BBB_cup_handle.html",
     ]
     assert all(call["patterns"][0].pattern == "cup_handle" for call in chart_calls)
 
@@ -450,10 +534,13 @@ def test_run_debug_saves_all_valid_setups_before_top_ten(monkeypatch, tmp_path):
 
     tickets = main.run(args)
 
+    run_dirs = list((tmp_path / "runs").iterdir())
+    assert len(run_dirs) == 1
+    ts = run_dirs[0].name
     assert len(tickets) == 10
     assert len(saved_paths) == 12
-    assert saved_paths[0] == Path("charts/01_T00_cup_handle.html")
-    assert saved_paths[-1] == Path("charts/12_T11_cup_handle.html")
+    assert saved_paths[0] == Path("runs") / ts / "charts" / "01_T00_cup_handle.html"
+    assert saved_paths[-1] == Path("runs") / ts / "charts" / "12_T11_cup_handle.html"
 
 
 def test_main_returns_cache_miss_status(monkeypatch, capsys):
@@ -469,7 +556,7 @@ def test_main_returns_cache_miss_status(monkeypatch, capsys):
     assert "CACHE_MISS" in captured.err
 
 
-def test_run_sp500_auto_warms_missing_cached_universe(monkeypatch):
+def test_run_sp500_auto_warms_missing_cached_universe(monkeypatch, capsys):
     calls: list[dict[str, object]] = []
 
     def _fake_build_screening_artifacts(**kwargs):
@@ -485,6 +572,7 @@ def test_run_sp500_auto_warms_missing_cached_universe(monkeypatch):
     args = main.build_parser().parse_args(["--account-size", "10000", "--risk-pct", "0.01"])
 
     tickets = main.run(args)
+    captured = capsys.readouterr()
 
     assert tickets == []
     assert len(calls) == 2
@@ -492,9 +580,11 @@ def test_run_sp500_auto_warms_missing_cached_universe(monkeypatch):
     assert calls[1]["fetch_data_fn"] is main.fetch_data
     assert calls[0]["select_universe_fn"] is main._select_universe_for_timed_cli
     assert calls[1]["select_universe_fn"] is main._select_universe_for_default_cli
+    assert "CACHE_MISS cached universe 'sp500' at cache/sp500_tickers.txt" in captured.err
+    assert "DOWNLOADING sp500 universe to cache/sp500_tickers.txt and market data as needed" in captured.err
 
 
-def test_run_sp500_auto_warms_missing_price_cache(monkeypatch):
+def test_run_sp500_auto_warms_missing_price_cache(monkeypatch, capsys):
     calls: list[dict[str, object]] = []
 
     def _fake_build_screening_artifacts(**kwargs):
@@ -510,6 +600,7 @@ def test_run_sp500_auto_warms_missing_price_cache(monkeypatch):
     args = main.build_parser().parse_args(["--account-size", "10000", "--risk-pct", "0.01"])
 
     tickets = main.run(args)
+    captured = capsys.readouterr()
 
     assert tickets == []
     assert len(calls) == 2
@@ -517,89 +608,102 @@ def test_run_sp500_auto_warms_missing_price_cache(monkeypatch):
     assert calls[1]["fetch_data_fn"] is main.fetch_data
     assert calls[0]["select_universe_fn"] is main._select_universe_for_timed_cli
     assert calls[1]["select_universe_fn"] is main._select_universe_for_default_cli
+    assert "CACHE_MISS missing price history for AAA in requested range 2026-04-01..2026-04-12" in captured.err
+    assert "DOWNLOADING price history for AAA in requested range 2026-04-01..2026-04-12" in captured.err
 
 
 def test_main_py_has_cli_shebang():
     first_line = Path("main.py").read_text().splitlines()[0]
     assert first_line == "#!/usr/bin/env python3"
-def _confirmed_double_bottom_result(ticker: str, breakout_day: date) -> PatternResult:
-    return PatternResult(
-        pattern="double_bottom",
-        ticker=ticker,
-        confidence=0.95,
-        detected_on=breakout_day,
-        pivots={
-            "left_high": 120.0,
-            "first_trough": 90.0,
-            "middle_high": 105.0,
-            "second_trough": 88.0,
-            "breakout": 106.0,
-        },
-        pivot_dates={
-            "left_high": date(2025, 1, 10),
-            "first_trough": date(2025, 1, 24),
-            "middle_high": date(2025, 2, 18),
-            "second_trough": date(2025, 3, 12),
-            "breakout": breakout_day,
-        },
-        metadata={"state": "confirmed", "buy_point": 105.0},
+
+
+# --- timestamped run folder tests ---
+
+def test_run_creates_timestamped_run_folder(monkeypatch, tmp_path):
+    import re
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("main.build_screening_artifacts", lambda **_kwargs: _artifacts())
+    monkeypatch.setattr("main.build_candidates", lambda artifacts, args: [])
+    monkeypatch.setattr("main._save_ticket_charts", lambda *args, **kwargs: [])
+
+    args = main.build_parser().parse_args(["--account-size", "10000", "--risk-pct", "0.01", "--max-loss-pct", "0.20"])
+    main.run(args)
+
+    run_dirs = list((tmp_path / "runs").iterdir())
+    assert len(run_dirs) == 1
+    assert re.match(r"\d{8}_\d{6}", run_dirs[0].name)
+
+
+def test_run_saves_charts_inside_run_folder(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    tickers = ["AAA", "BBB"]
+    artifacts = ScreeningArtifacts(
+        raw_df=_raw_df_many(tickers),
+        summary_all=pd.DataFrame(),
+        summary=pd.DataFrame(),
+        benchmark_bounces={},
     )
+    chart_calls: list[dict[str, object]] = []
 
+    class _FakeFigure:
+        def write_html(self, path: str) -> None:
+            chart_calls[-1]["path"] = path
 
-def _active_pre_breakout_double_bottom_result(
-    ticker: str,
-    *,
-    active_zone_pct_below_buy_point: float,
-) -> PatternResult:
-    return PatternResult(
-        pattern="double_bottom",
-        ticker=ticker,
-        confidence=0.88,
-        detected_on=date(2025, 4, 14),
-        pivots={
-            "left_high": 120.0,
-            "first_trough": 90.0,
-            "middle_high": 105.0,
-            "second_trough": 88.0,
-        },
-        pivot_dates={
-            "left_high": date(2025, 1, 10),
-            "first_trough": date(2025, 1, 24),
-            "middle_high": date(2025, 2, 18),
-            "second_trough": date(2025, 3, 12),
-        },
-        metadata={
-            "state": "active_pre_breakout",
-            "buy_point": 105.0,
-            "active_zone_pct_below_buy_point": active_zone_pct_below_buy_point,
-        },
+    def _fake_chart(ticker, df, patterns, setup=None, ticket=None, show=True):
+        chart_calls.append({"ticker": ticker, "show": show, "setup": setup, "ticket": ticket, "patterns": patterns})
+        return _FakeFigure()
+
+    monkeypatch.setattr("main.build_screening_artifacts", lambda **_kwargs: artifacts)
+    monkeypatch.setattr(
+        "main.build_candidates",
+        lambda artifacts, args: [_candidate("AAA", 0.9), _candidate("BBB", 0.8)],
     )
+    monkeypatch.setattr("charts.chart", _fake_chart)
+    monkeypatch.setattr("patterns.detect_all", lambda df, ticker: [_pattern_result(ticker)])
+
+    args = main.build_parser().parse_args(["--account-size", "10000", "--risk-pct", "0.01", "--max-loss-pct", "0.20"])
+    main.run(args)
+
+    run_dirs = list((tmp_path / "runs").iterdir())
+    assert len(run_dirs) == 1
+    ts = run_dirs[0].name
+    assert [Path(call["path"]) for call in chart_calls] == [
+        Path("runs") / ts / "charts" / "01_AAA_cup_handle.html",
+        Path("runs") / ts / "charts" / "02_BBB_cup_handle.html",
+    ]
 
 
-def test_is_recent_pattern_result_uses_breakout_date_for_confirmed_double_bottom():
-    latest_date = date(2025, 4, 14)
-    pattern_result = _confirmed_double_bottom_result("AAA", date(2025, 4, 3))
-
-    assert main._is_recent_pattern_result(pattern_result, latest_date=latest_date) is True
-
-
-def test_is_recent_pattern_result_treats_active_pre_breakout_double_bottom_as_current():
-    latest_date = date(2025, 4, 14)
-    pattern_result = _active_pre_breakout_double_bottom_result(
-        "AAA",
-        active_zone_pct_below_buy_point=0.08,
+def test_run_saves_screened_ranking_csv(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    summary = pd.DataFrame(
+        {
+            "Ticker": ["AAA", "BBB"],
+            "current_price": [50.0, 60.0],
+            "bounce_pct": [15.0, 20.0],
+            "avg_vol_50d": [2_000_000.0, 3_000_000.0],
+            "fifty_two_week_high": [60.0, 70.0],
+            "sector": ["Technology", "Healthcare"],
+            "industry": ["Software", "Biotech"],
+        }
     )
-
-    assert main._is_recent_pattern_result(pattern_result, latest_date=latest_date) is True
-
-
-def test_is_recent_pattern_result_rejects_inactive_pre_breakout_double_bottom():
-    latest_date = date(2025, 4, 14)
-    pattern_result = _active_pre_breakout_double_bottom_result(
-        "AAA",
-        active_zone_pct_below_buy_point=0.12,
+    artifacts = ScreeningArtifacts(
+        raw_df=pd.DataFrame(),
+        summary_all=summary,
+        summary=summary,
+        benchmark_bounces={},
     )
+    monkeypatch.setattr("main.build_screening_artifacts", lambda **_kwargs: artifacts)
+    monkeypatch.setattr("main.build_candidates", lambda artifacts, args: [])
+    monkeypatch.setattr("main._save_ticket_charts", lambda *args, **kwargs: [])
 
-    assert main._is_recent_pattern_result(pattern_result, latest_date=latest_date) is False
+    args = main.build_parser().parse_args(["--account-size", "10000", "--risk-pct", "0.01", "--max-loss-pct", "0.20"])
+    main.run(args)
 
-
+    run_dirs = list((tmp_path / "runs").iterdir())
+    assert len(run_dirs) == 1
+    csv_path = run_dirs[0] / "screened_ranking.csv"
+    assert csv_path.exists()
+    df = pd.read_csv(csv_path)
+    # sorted by bounce_pct descending
+    assert list(df["Ticker"]) == ["BBB", "AAA"]

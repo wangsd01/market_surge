@@ -84,6 +84,50 @@ HIGH2_NEAR_SWING_RESULT = _result(
 )
 
 
+def test_strategy_rejects_cup_forming_without_handle():
+    result = _result(
+        "cup_handle",
+        {"left_high": 100.0, "cup_low": 75.0},
+        metadata={"state": "cup_forming", "actionable": False},
+    )
+
+    with pytest.raises(ValueError, match="requires complete handle"):
+        strategy(result)
+
+
+def test_strategy_rejects_non_actionable_early_handle():
+    result = _result(
+        "cup_handle",
+        {
+            "left_high": 100.0,
+            "cup_low": 75.0,
+            "handle_high": 97.0,
+            "handle_low": 91.0,
+        },
+        metadata={"state": "handle_forming", "actionable": False},
+    )
+
+    with pytest.raises(ValueError, match="requires complete handle"):
+        strategy(result)
+
+
+def test_strategy_allows_actionable_handle_forming_setup():
+    result = _result(
+        "cup_handle",
+        {
+            "left_high": 100.0,
+            "cup_low": 75.0,
+            "handle_high": 97.0,
+            "handle_low": 91.0,
+        },
+        metadata={"state": "handle_forming", "actionable": True},
+    )
+
+    setup = strategy(result)
+
+    assert setup.entry == 97.10
+
+
 class TestTradeSetup:
 
     def test_returns_trade_setup_dataclass(self):

@@ -69,6 +69,10 @@ def _levels(result: PatternResult) -> tuple[float, float]:
     pivots = result.pivots
 
     if p == "cup_handle":
+        if result.metadata.get("actionable", True) is False:
+            raise ValueError("cup_handle strategy requires complete handle")
+        if "handle_high" not in pivots or "handle_low" not in pivots:
+            raise ValueError("cup_handle strategy requires complete handle")
         return pivots["handle_high"], pivots["handle_low"]
 
     if p == "double_bottom":

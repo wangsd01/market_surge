@@ -79,13 +79,13 @@ def test_get_tickers_with_sic_field_applies_sic_filter(monkeypatch):
                 "fields": ["cik", "name", "ticker", "exchange", "sic"],
                 "data": [
                     [1, "FinTrust", "FTRS", "NYSE", 6700],
-                    [2, "Industrial", "INDU", "NYSE", 2000],
+                    [2, "Industrial", "INDS", "NYSE", 2000],
                 ],
             }
 
     monkeypatch.setattr("fetcher.requests.get", lambda *_args, **_kwargs: _Resp())
     tickers = get_tickers()
-    assert tickers == ["FTRS"]
+    assert tickers == ["INDS"]
 
 
 def test_get_tickers_ignores_otc_exchange(monkeypatch):
