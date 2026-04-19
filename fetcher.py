@@ -21,6 +21,7 @@ from db import (
     get_ticker_metadata as get_cached_ticker_metadata,
     init_db,
     save_invalid_tickers,
+    save_price_coverage,
     save_price_history,
     save_ticker_metadata,
 )
@@ -421,8 +422,10 @@ def fetch_data(
             downloaded = downloaded.loc[
                 pd.to_datetime(downloaded["Date"]).dt.date < _today_market_date()
             ].copy()
-            delete_invalid_tickers(conn, list(_observed_tickers(downloaded)), source=invalid_source)
+            observed_tickers = list(_observed_tickers(downloaded))
+            delete_invalid_tickers(conn, observed_tickers, source=invalid_source)
             save_price_history(conn, downloaded)
+            save_price_coverage(conn, observed_tickers, low_start, end_date, source=invalid_source)
         return get_cached_price_history(conn, ticker_list, low_start, end_date)
     finally:
         conn.close()

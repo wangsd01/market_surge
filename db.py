@@ -111,6 +111,24 @@ def init_db(db_path: str | Path) -> sqlite3.Connection:
     )
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS raw_price_coverage (
+            ticker TEXT NOT NULL,
+            low_start DATE NOT NULL,
+            end_date DATE NOT NULL,
+            source TEXT NOT NULL,
+            fetched_at TIMESTAMP NOT NULL,
+            PRIMARY KEY (ticker, low_start, end_date, source)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_raw_price_coverage_ticker_range
+        ON raw_price_coverage(ticker, low_start, end_date)
+        """
+    )
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS invalid_tickers (
             ticker TEXT NOT NULL,
             source TEXT NOT NULL,
@@ -285,6 +303,30 @@ def save_price_history(conn: sqlite3.Connection, price_df: pd.DataFrame) -> None
         )
 
 
+def save_price_coverage(
+    conn: sqlite3.Connection,
+    tickers: list[str],
+    low_start: str,
+    end_date: str,
+    source: str,
+) -> None:
+    normalized = sorted({str(ticker).strip().upper() for ticker in tickers if str(ticker).strip()})
+    if not normalized:
+        return
+
+    fetched_at = datetime.now(UTC).replace(microsecond=0).isoformat(sep=" ")
+    records = [(ticker, low_start, end_date, source, fetched_at) for ticker in normalized]
+    with conn:
+        conn.executemany(
+            """
+            INSERT OR REPLACE INTO raw_price_coverage
+            (ticker, low_start, end_date, source, fetched_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            records,
+        )
+
+
 def delete_price_history_for_date(conn: sqlite3.Connection, target_date: str) -> None:
     with conn:
         conn.execute("DELETE FROM raw_price_history WHERE date = ?", (target_date,))
@@ -353,7 +395,20 @@ def get_tickers_with_cached_coverage(
     if not expected_dates:
         return set(tickers)
 
+    normalized_tickers = [str(ticker).upper() for ticker in tickers]
     placeholders = ",".join("?" for _ in tickers)
+    coverage_query = f"""
+        SELECT ticker
+        FROM raw_price_coverage
+        WHERE ticker IN ({placeholders})
+          AND date(low_start) <= date(?)
+          AND date(end_date) >= date(?)
+    """
+    covered_by_fetch = {
+        str(row[0]).upper()
+        for row in conn.execute(coverage_query, [*normalized_tickers, low_start, end_date]).fetchall()
+    }
+
     params: list[Any] = [*tickers, low_start, end_date]
     query = f"""
         SELECT ticker, date
@@ -372,9 +427,21 @@ def get_tickers_with_cached_coverage(
         norm_ticker = str(ticker).upper()
         dates_by_ticker.setdefault(norm_ticker, set()).add(str(date_value))
 
-    return {
-        ticker for ticker in tickers if expected_dates.issubset(dates_by_ticker.get(str(ticker).upper(), set()))
-    }
+    covered: set[str] = set()
+    for ticker in tickers:
+        norm_ticker = str(ticker).upper()
+        if norm_ticker in covered_by_fetch:
+            covered.add(ticker)
+            continue
+
+        ticker_dates = dates_by_ticker.get(norm_ticker, set())
+        if not ticker_dates:
+            continue
+        first_cached_date = min(ticker_dates)
+        required_dates = {date for date in expected_dates if date >= first_cached_date}
+        if required_dates.issubset(ticker_dates):
+            covered.add(ticker)
+    return covered
 
 
 def has_cached_coverage(

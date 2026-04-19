@@ -35,6 +35,21 @@ def _null_prices() -> pd.DataFrame:
     )
 
 
+def _prices_with_symbol_specific_gap() -> pd.DataFrame:
+    dates = pd.to_datetime(["2025-11-07", "2025-11-10", "2025-11-11", "2025-11-13", "2025-11-14"])
+    return pd.DataFrame(
+        {
+            "Date": dates,
+            "Ticker": ["FISV"] * len(dates),
+            "Open": [60.95, 63.91, 63.60, 64.85, 64.00],
+            "High": [63.84, 64.18, 64.48, 66.95, 64.15],
+            "Low": [60.95, 62.67, 62.84, 64.37, 63.02],
+            "Close": [63.70, 63.80, 64.26, 64.53, 63.42],
+            "Volume": [14_163_900, 8_431_600, 5_427_200, 9_274_500, 5_596_500],
+        }
+    )
+
+
 def test_fetch_data_uses_sqlite_cache_without_download(tmp_path, monkeypatch):
     db_path = tmp_path / "raw_cache.db"
     conn = init_db(db_path)
@@ -202,6 +217,29 @@ def test_has_cached_coverage_ignores_market_holidays(tmp_path):
     conn.close()
 
 
+def test_has_cached_coverage_accepts_tickers_that_start_trading_after_range_start(tmp_path):
+    db_path = tmp_path / "raw_cache.db"
+    conn = init_db(db_path)
+    dates = pd.to_datetime(["2026-04-02", "2026-04-06"])
+    save_price_history(
+        conn,
+        pd.DataFrame(
+            {
+                "Date": dates,
+                "Ticker": ["NEW"] * len(dates),
+                "Open": [20.0] * len(dates),
+                "High": [21.0] * len(dates),
+                "Low": [19.0] * len(dates),
+                "Close": [20.5] * len(dates),
+                "Volume": [1_000_000] * len(dates),
+            }
+        ),
+    )
+
+    assert has_cached_coverage(conn, ["NEW"], "2026-03-30", "2026-04-07") is True
+    conn.close()
+
+
 def test_fetch_data_downloads_when_cache_contains_only_null_rows(tmp_path, monkeypatch):
     db_path = tmp_path / "raw_cache.db"
     conn = init_db(db_path)
@@ -253,6 +291,46 @@ def test_fetch_data_downloads_when_cache_has_partial_range_for_ticker(tmp_path, 
 
     assert seen["tickers"] == ["AAPL"]
     assert list(out["Date"].dt.strftime("%Y-%m-%d")) == ["2026-04-01", "2026-04-02"]
+
+
+def test_fetch_data_does_not_redownload_provider_confirmed_symbol_specific_gap(tmp_path, monkeypatch):
+    db_path = tmp_path / "raw_cache.db"
+    calls = {"downloaded": 0}
+
+    def _mock_download(tickers, low_start, end_date):
+        calls["downloaded"] += 1
+        assert tickers == ["FISV"]
+        assert low_start == "2025-11-07"
+        assert end_date == "2025-11-15"
+        return _prices_with_symbol_specific_gap(), []
+
+    monkeypatch.setattr("fetcher._download_all_batches", _mock_download)
+
+    first = fetch_data(
+        tickers=["FISV"],
+        low_start="2025-11-07",
+        end_date="2025-11-15",
+        cache_dir=tmp_path,
+        refresh=False,
+        db_path=db_path,
+    )
+
+    def _should_not_download(*_args, **_kwargs):
+        raise AssertionError("Provider-confirmed missing sessions should not redownload")
+
+    monkeypatch.setattr("fetcher._download_all_batches", _should_not_download)
+    second = fetch_data(
+        tickers=["FISV"],
+        low_start="2025-11-07",
+        end_date="2025-11-15",
+        cache_dir=tmp_path,
+        refresh=False,
+        db_path=db_path,
+    )
+
+    assert calls["downloaded"] == 1
+    assert len(first) == 5
+    assert len(second) == 5
 
 
 def test_fetch_data_skips_known_invalid_tickers_before_download(tmp_path, monkeypatch):
