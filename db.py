@@ -6,6 +6,53 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+from dateutil.relativedelta import MO, TH
+from pandas.tseries.holiday import (
+    AbstractHolidayCalendar,
+    GoodFriday,
+    Holiday,
+    nearest_workday,
+)
+from pandas.tseries.offsets import DateOffset
+
+
+class _NyseHolidayCalendar(AbstractHolidayCalendar):
+    rules = [
+        Holiday("New Year's Day", month=1, day=1, observance=nearest_workday),
+        Holiday(
+            "Martin Luther King Jr. Day",
+            month=1,
+            day=1,
+            offset=DateOffset(weekday=MO(3)),
+        ),
+        Holiday(
+            "Washington's Birthday",
+            month=2,
+            day=1,
+            offset=DateOffset(weekday=MO(3)),
+        ),
+        GoodFriday,
+        Holiday("Memorial Day", month=5, day=31, offset=DateOffset(weekday=MO(-1))),
+        Holiday(
+            "Juneteenth",
+            month=6,
+            day=19,
+            observance=nearest_workday,
+            start_date="2022-06-19",
+        ),
+        Holiday("Independence Day", month=7, day=4, observance=nearest_workday),
+        Holiday("Labor Day", month=9, day=1, offset=DateOffset(weekday=MO(1))),
+        Holiday(
+            "Thanksgiving Day",
+            month=11,
+            day=1,
+            offset=DateOffset(weekday=TH(4)),
+        ),
+        Holiday("Christmas Day", month=12, day=25, observance=nearest_workday),
+    ]
+
+
+_NYSE_HOLIDAY_CALENDAR = _NyseHolidayCalendar()
 
 
 def init_db(db_path: str | Path) -> sqlite3.Connection:
@@ -285,7 +332,12 @@ def _expected_cache_dates(low_start: str, end_date: str) -> set[str]:
     if end_ts <= start_ts:
         return set()
     dates = pd.bdate_range(start=start_ts, end=end_ts - pd.Timedelta(days=1))
-    return {ts.date().isoformat() for ts in dates}
+    holidays = _NYSE_HOLIDAY_CALENDAR.holidays(
+        start=start_ts,
+        end=end_ts - pd.Timedelta(days=1),
+    )
+    trading_dates = dates.difference(holidays)
+    return {ts.date().isoformat() for ts in trading_dates}
 
 
 def get_tickers_with_cached_coverage(

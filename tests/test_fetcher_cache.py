@@ -177,6 +177,31 @@ def test_has_cached_coverage_rejects_partial_ranges(tmp_path):
     conn.close()
 
 
+def test_has_cached_coverage_ignores_market_holidays(tmp_path):
+    db_path = tmp_path / "raw_cache.db"
+    conn = init_db(db_path)
+    dates = pd.to_datetime(
+        ["2026-03-30", "2026-03-31", "2026-04-01", "2026-04-02", "2026-04-06"]
+    )
+    save_price_history(
+        conn,
+        pd.DataFrame(
+            {
+                "Date": dates,
+                "Ticker": ["AAPL"] * len(dates),
+                "Open": [149.0] * len(dates),
+                "High": [151.0] * len(dates),
+                "Low": [148.0] * len(dates),
+                "Close": [150.0] * len(dates),
+                "Volume": [10_000_000] * len(dates),
+            }
+        ),
+    )
+
+    assert has_cached_coverage(conn, ["AAPL"], "2026-03-30", "2026-04-07") is True
+    conn.close()
+
+
 def test_fetch_data_downloads_when_cache_contains_only_null_rows(tmp_path, monkeypatch):
     db_path = tmp_path / "raw_cache.db"
     conn = init_db(db_path)
