@@ -63,6 +63,7 @@ def build_candidates(artifacts: ScreeningArtifacts, args: argparse.Namespace) ->
     if filtered.empty:
         return []
 
+    from actionability import assess_actionability
     from patterns import detect_all
     from strategies import strategy as compute_strategy
 
@@ -79,6 +80,9 @@ def build_candidates(artifacts: ScreeningArtifacts, args: argparse.Namespace) ->
             if not pattern_result.pivots:
                 continue
             if not _is_recent_pattern_result(pattern_result, latest_date=df.index[-1].date()):
+                continue
+            assessment = assess_actionability(pattern_result, current_price=float(row["current_price"]))
+            if not assessment.is_actionable:
                 continue
             try:
                 setup = compute_strategy(pattern_result)
@@ -294,10 +298,9 @@ def _is_recent_pattern_result(
             age_bdays = max(len(pd.bdate_range(reference_date, latest_date)) - 1, 0)
             return age_bdays <= max_age_bdays
         if state == "active_pre_breakout":
-            active_zone_pct = pattern_result.metadata.get("active_zone_pct_below_buy_point")
-            if active_zone_pct is None or float(active_zone_pct) > 0.10:
-                return False
-            return True
+            reference_date = pattern_result.detected_on
+            age_bdays = max(len(pd.bdate_range(reference_date, latest_date)) - 1, 0)
+            return age_bdays <= max_age_bdays
 
     pivot_dates = [pivot_date for pivot_date in pattern_result.pivot_dates.values() if pivot_date is not None]
     reference_date = max(pivot_dates) if pivot_dates else pattern_result.detected_on

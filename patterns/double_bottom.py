@@ -12,9 +12,6 @@ _MIN_BASE_BDAYS = 35
 _MIN_BASE_DEPTH = 0.15
 _MAX_BASE_DEPTH = 0.33
 _MAX_UNDERCUT_PCT = 0.05
-_ACTIVE_ZONE_MAX = 0.10
-
-
 def _is_swing_low(values: list[float], idx: int, order: int = _SWING_ORDER) -> bool:
     if idx < order or idx + order >= len(values):
         return False
@@ -138,9 +135,6 @@ class DoubleBottomDetector(PatternDetector):
                     state = "confirmed"
                     breakout_volume_ratio = _volume_ratio(volumes, breakout_idx)
                 else:
-                    active_zone_pct = (middle_high - closes[-1]) / middle_high if middle_high > 0 else 1.0
-                    if active_zone_pct < 0.0 or active_zone_pct > _ACTIVE_ZONE_MAX:
-                        continue
                     state = "active_pre_breakout"
 
                 first_trough_volume = _avg_vol(volumes, first_trough_idx)

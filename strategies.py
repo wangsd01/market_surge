@@ -33,7 +33,7 @@ class TradeSetup:
 
 def strategy(result: PatternResult) -> TradeSetup:
     """Derive informational trade setup from PatternResult geometry."""
-    breakout, stop = _levels(result)
+    breakout, stop = levels_for(result)
     entry = _entry_price(result.pattern, breakout)
     rr = RISK_REWARD[result.pattern]
     risk_per_share = entry - stop
@@ -63,14 +63,12 @@ def _entry_price(pattern: str, breakout: float) -> float:
     return breakout * 1.0005
 
 
-def _levels(result: PatternResult) -> tuple[float, float]:
+def levels_for(result: PatternResult) -> tuple[float, float]:
     """Return (breakout_price, stop_price) for the given pattern."""
     p = result.pattern
     pivots = result.pivots
 
     if p == "cup_handle":
-        if result.metadata.get("actionable", True) is False:
-            raise ValueError("cup_handle strategy requires complete handle")
         if "handle_high" not in pivots or "handle_low" not in pivots:
             raise ValueError("cup_handle strategy requires complete handle")
         return pivots["handle_high"], pivots["handle_low"]

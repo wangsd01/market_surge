@@ -6,6 +6,7 @@ from datetime import date
 
 import pandas as pd
 
+from actionability import ActionabilityAssessment
 from decision_tickets import DecisionCandidate
 from fetcher import CacheMissError, UniverseCacheMissError
 from pipeline import ScreeningArtifacts
@@ -85,6 +86,30 @@ def _pattern_result(ticker: str, pattern: str = "cup_handle") -> PatternResult:
             "handle_high": date(2025, 1, 6),
             "handle_low": date(2025, 1, 7),
         },
+    )
+
+
+def _handle_forming_cup_result(ticker: str) -> PatternResult:
+    return PatternResult(
+        pattern="cup_handle",
+        ticker=ticker,
+        confidence=0.9,
+        detected_on=date(2025, 4, 10),
+        pivots={
+            "left_high": 110.0,
+            "cup_low": 85.0,
+            "right_high": 105.0,
+            "handle_high": 100.0,
+            "handle_low": 95.0,
+        },
+        pivot_dates={
+            "left_high": date(2025, 3, 24),
+            "cup_low": date(2025, 4, 1),
+            "right_high": date(2025, 4, 7),
+            "handle_high": date(2025, 4, 9),
+            "handle_low": date(2025, 4, 10),
+        },
+        metadata={"state": "handle_forming", "actionable": False},
     )
 
 
@@ -401,6 +426,15 @@ def test_build_candidates_includes_recent_high2_patterns(monkeypatch):
     )
 
     monkeypatch.setattr("patterns.detect_all", lambda df, ticker: [_high2_pattern_result(ticker, date(2025, 4, 10))])
+    monkeypatch.setattr(
+        "actionability.assess_actionability",
+        lambda result, current_price: ActionabilityAssessment(
+            is_actionable=True,
+            reason="post_breakout_pullback",
+            entry=119.0,
+            stop=110.0,
+        ),
+    )
 
     args = main.build_parser().parse_args(["--account-size", "10000", "--risk-pct", "0.01", "--max-loss-pct", "0.20"])
 
@@ -408,6 +442,65 @@ def test_build_candidates_includes_recent_high2_patterns(monkeypatch):
 
     assert len(candidates) == 1
     assert candidates[0].pattern == "high2"
+
+
+def test_build_candidates_skips_detected_patterns_that_are_not_actionable(monkeypatch):
+    raw_df = _raw_df_long("AAA", periods=80)
+    summary = pd.DataFrame(
+        {
+            "Ticker": ["AAA"],
+            "current_price": [89.0],
+            "bounce_pct": [30.0],
+            "avg_vol_50d": [1_000_000.0],
+            "fifty_two_week_high": [120.0],
+            "sector": ["Technology"],
+            "industry": ["Semiconductors"],
+        }
+    )
+    artifacts = ScreeningArtifacts(
+        raw_df=raw_df,
+        summary_all=summary,
+        summary=summary,
+        benchmark_bounces={},
+    )
+
+    monkeypatch.setattr("patterns.detect_all", lambda df, ticker: [_handle_forming_cup_result(ticker)])
+
+    args = main.build_parser().parse_args(["--account-size", "10000", "--risk-pct", "0.01", "--max-loss-pct", "0.20"])
+
+    candidates = main.build_candidates(artifacts, args)
+
+    assert candidates == []
+
+
+def test_build_candidates_includes_pre_breakout_patterns_when_actionable(monkeypatch):
+    raw_df = _raw_df_long("AAA", periods=80)
+    summary = pd.DataFrame(
+        {
+            "Ticker": ["AAA"],
+            "current_price": [92.1],
+            "bounce_pct": [30.0],
+            "avg_vol_50d": [1_000_000.0],
+            "fifty_two_week_high": [120.0],
+            "sector": ["Technology"],
+            "industry": ["Semiconductors"],
+        }
+    )
+    artifacts = ScreeningArtifacts(
+        raw_df=raw_df,
+        summary_all=summary,
+        summary=summary,
+        benchmark_bounces={},
+    )
+
+    monkeypatch.setattr("patterns.detect_all", lambda df, ticker: [_handle_forming_cup_result(ticker)])
+
+    args = main.build_parser().parse_args(["--account-size", "10000", "--risk-pct", "0.01", "--max-loss-pct", "0.20"])
+
+    candidates = main.build_candidates(artifacts, args)
+
+    assert len(candidates) == 1
+    assert candidates[0].pattern == "cup_handle"
 
 
 def test_is_recent_pattern_result_keeps_patterns_within_ten_trading_days():
@@ -441,14 +534,14 @@ def test_is_recent_pattern_result_treats_active_pre_breakout_double_bottom_as_cu
     assert main._is_recent_pattern_result(pattern_result, latest_date=latest_date) is True
 
 
-def test_is_recent_pattern_result_rejects_inactive_pre_breakout_double_bottom():
+def test_is_recent_pattern_result_keeps_active_pre_breakout_double_bottom_focused_on_freshness_only():
     latest_date = date(2025, 4, 14)
     pattern_result = _active_pre_breakout_double_bottom_result(
         "AAA",
         active_zone_pct_below_buy_point=0.12,
     )
 
-    assert main._is_recent_pattern_result(pattern_result, latest_date=latest_date) is False
+    assert main._is_recent_pattern_result(pattern_result, latest_date=latest_date) is True
 
 
 def test_run_saves_chart_files_for_ranked_tickets(monkeypatch, tmp_path):

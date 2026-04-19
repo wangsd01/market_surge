@@ -76,6 +76,28 @@ def _ibd_pre_breakout_df() -> pd.DataFrame:
     return _build_ohlcv(closes, highs=highs, lows=lows, volumes=volumes)
 
 
+def _ibd_pre_breakout_far_below_df() -> pd.DataFrame:
+    closes = (
+        [100, 99, 97, 95, 92, 89, 85, 82, 79, 77]
+        + [76, 75, 76, 78, 80]
+        + [82, 84, 86, 88, 89, 88, 87, 86, 85, 84, 83, 82]
+        + [82, 80, 78, 77, 76, 75, 74, 73, 72, 73]
+        + [74, 76, 77, 78, 79, 80, 80, 80, 80, 80]
+    )
+    highs = list(closes)
+    lows = [price - 1.0 for price in closes]
+    highs[0] = 100.0
+    lows[11] = 74.0
+    highs[19] = 90.0
+    lows[35] = 71.0
+    volumes = [1_050_000] * len(closes)
+    for idx in range(10, 13):
+        volumes[idx] = 1_450_000
+    for idx in range(34, 37):
+        volumes[idx] = 900_000
+    return _build_ohlcv(closes, highs=highs, lows=lows, volumes=volumes)
+
+
 def _internal_w_but_later_base_df() -> pd.DataFrame:
     closes = (
         [100, 98, 96, 94, 90, 86, 82, 79, 76, 75]
@@ -203,6 +225,16 @@ class TestDoubleBottomDetector:
         assert result.pivots["middle_high"] == 90.0
         assert "breakout" not in result.pivots
         assert result.metadata["active_zone_pct_below_buy_point"] == pytest.approx((90.0 - 82.0) / 90.0, rel=1e-3)
+
+    def test_detects_active_pre_breakout_double_bottom_even_when_more_than_ten_percent_below_buy_point(self):
+        df = _ibd_pre_breakout_far_below_df()
+
+        result = DoubleBottomDetector().detect(df, "TEST")
+
+        assert result is not None
+        assert result.metadata["state"] == "active_pre_breakout"
+        assert result.pivots["middle_high"] == 90.0
+        assert result.metadata["active_zone_pct_below_buy_point"] == pytest.approx((90.0 - 80.0) / 90.0, rel=1e-3)
 
     def test_prefers_later_broader_base_over_internal_w(self):
         df = _internal_w_but_later_base_df()

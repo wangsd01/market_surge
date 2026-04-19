@@ -197,7 +197,7 @@ class CupHandleDetector(PatternDetector):
                 best_key = candidate_key
                 best = (
                     rh_idx, rh_price, h_low, h_low_rel, h_dur, h_start,
-                    c2, c4, c5, c6, c7, handle_depth_pct, state
+                    c2, c4, c5, c6, c7, handle_depth_pct, state, breakout_idx
                 )
 
         if best is None:
@@ -235,7 +235,7 @@ class CupHandleDetector(PatternDetector):
 
         (right_high_idx, right_high_price, handle_low_price,
          handle_low_rel, handle_duration, handle_start_idx,
-         c2, c4, c5, c6, c7, handle_depth_pct, state) = best
+         c2, c4, c5, c6, c7, handle_depth_pct, state, breakout_idx) = best
 
         # --- Evaluate cup conditions ---
         c3_recovery = (left_high_price - right_high_price) / left_high_price
@@ -261,6 +261,9 @@ class CupHandleDetector(PatternDetector):
             "handle_low": dates[handle_start_idx + handle_low_rel].date(),
             "handle_high": dates[right_high_idx].date(),
         }
+        if breakout_idx is not None:
+            pivots["breakout"] = float(closes[breakout_idx])
+            pivot_dates["breakout"] = dates[breakout_idx].date()
 
         return PatternResult(
             pattern="cup_handle",

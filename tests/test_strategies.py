@@ -2,7 +2,7 @@ import pytest
 from datetime import date
 
 from patterns.base import PatternResult
-from strategies import TradeSetup, strategy
+from strategies import TradeSetup, levels_for, strategy
 
 
 def _result(pattern: str, pivots: dict, metadata: dict | None = None) -> PatternResult:
@@ -92,10 +92,10 @@ def test_strategy_rejects_cup_forming_without_handle():
     )
 
     with pytest.raises(ValueError, match="requires complete handle"):
-        strategy(result)
+        levels_for(result)
 
 
-def test_strategy_rejects_non_actionable_early_handle():
+def test_strategy_allows_non_actionable_handle_when_geometry_is_complete():
     result = _result(
         "cup_handle",
         {
@@ -107,25 +107,16 @@ def test_strategy_rejects_non_actionable_early_handle():
         metadata={"state": "handle_forming", "actionable": False},
     )
 
-    with pytest.raises(ValueError, match="requires complete handle"):
-        strategy(result)
-
-
-def test_strategy_allows_actionable_handle_forming_setup():
-    result = _result(
-        "cup_handle",
-        {
-            "left_high": 100.0,
-            "cup_low": 75.0,
-            "handle_high": 97.0,
-            "handle_low": 91.0,
-        },
-        metadata={"state": "handle_forming", "actionable": True},
-    )
-
     setup = strategy(result)
 
     assert setup.entry == 97.10
+
+
+def test_levels_for_returns_breakout_and_stop_for_double_bottom():
+    breakout, stop = levels_for(DOUBLE_RESULT)
+
+    assert breakout == 100.0
+    assert stop == 81.0
 
 
 class TestTradeSetup:

@@ -290,6 +290,8 @@ class TestPOWLCupHandle:
         result = CupHandleDetector().detect(df, "POWL")
 
         assert result is not None, "should detect the 03/25 right lip, not the breakout bar"
+        assert result.metadata["state"] == "complete"
+        assert "breakout" in result.pivots
         assert result.pivots["handle_low"] < result.pivots["handle_high"], (
             "handle_low > handle_high — detector mistook the breakout for right_high "
             "and has no real downward handle remaining"
@@ -322,5 +324,6 @@ class TestPOWLCupHandle:
         assert result is not None
         assert result.pivot_dates["left_high"] == date(2026, 2, 12)
         assert result.pivot_dates["right_high"] == date(2026, 3, 25)
+        assert result.pivot_dates["breakout"] == date(2026, 4, 9)
         assert result.detected_on == date(2026, 4, 17)
         assert result.pivot_dates["handle_low"] == date(2026, 3, 31)
