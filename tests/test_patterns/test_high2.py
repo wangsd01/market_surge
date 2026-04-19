@@ -134,6 +134,43 @@ def test_rejects_weak_h2_signal_bar():
     assert result is None
 
 
+def test_rejects_h1_too_far_from_pullback():
+    rows = _valid_h2_rows()
+    extra: list[tuple[float, float, float, float, int]] = [
+        (103.7, 104.1, 103.7, 104.0, 850_000),
+        (103.8, 104.0, 103.8, 103.95, 840_000),
+        (103.7, 103.9, 103.7, 103.85, 830_000),
+        (103.6, 103.8, 103.6, 103.75, 820_000),
+        (103.5, 103.7, 103.5, 103.65, 810_000),
+        (103.5, 103.6, 103.5, 103.55, 800_000),
+    ]
+    rows = rows[:12] + extra + rows[12:]
+
+    result = High2Detector().detect(_df(rows), "TEST")
+
+    assert result is None
+
+
+def test_rejects_h2_too_far_from_h1():
+    rows = _valid_h2_rows()
+    extra: list[tuple[float, float, float, float, int]] = [
+        (104.5, 105.5, 104.3, 104.8, 900_000),
+        (104.8, 105.4, 104.6, 104.9, 890_000),
+        (104.9, 105.3, 104.7, 105.0, 880_000),
+        (105.0, 105.3, 104.8, 105.1, 870_000),
+        (105.1, 105.4, 104.9, 105.2, 860_000),
+        (105.2, 105.5, 105.0, 105.3, 850_000),
+        (105.3, 105.5, 105.1, 105.4, 840_000),
+        (105.4, 105.5, 105.2, 105.3, 830_000),
+        (105.3, 105.5, 105.1, 105.2, 820_000),
+    ]
+    rows = rows[:15] + extra + rows[15:]
+
+    result = High2Detector().detect(_df(rows), "TEST")
+
+    assert result is None
+
+
 def test_prefers_highest_confidence_h2_when_multiple_candidates_exist():
     rows = _valid_h2_rows() + [
         (105.2, 105.4, 104.8, 105.0, 1_000_000),

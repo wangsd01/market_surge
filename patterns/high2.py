@@ -15,6 +15,8 @@ _PULLBACK_MIN = 2
 _PULLBACK_MAX = 5
 _PULLBACK_FULL_SCORE_MAX = 0.50
 _PULLBACK_REJECT_MAX = 0.60
+_H1_MAX_BARS = 5
+_H2_MAX_BARS = 8
 
 
 class High2Detector(PatternDetector):
@@ -190,7 +192,7 @@ def _pullback_is_valid(df: pd.DataFrame, start_idx: int, end_idx: int) -> bool:
 
 
 def _find_h1(df: pd.DataFrame, start_idx: int) -> int | None:
-    for idx in range(start_idx, len(df)):
+    for idx in range(start_idx, min(len(df), start_idx + _H1_MAX_BARS)):
         if float(df["High"].iloc[idx]) > float(df["High"].iloc[idx - 1]):
             return idx
     return None
@@ -208,7 +210,7 @@ def _h1_failed(df: pd.DataFrame, h1_idx: int, h1_high: float) -> bool:
 
 
 def _find_h2(df: pd.DataFrame, start_idx: int, trigger_level: float) -> int | None:
-    for idx in range(start_idx, len(df)):
+    for idx in range(start_idx, min(len(df), start_idx + _H2_MAX_BARS)):
         if float(df["High"].iloc[idx]) > trigger_level:
             return idx
     return None
