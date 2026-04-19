@@ -522,3 +522,84 @@ def test_run_sp500_auto_warms_missing_price_cache(monkeypatch):
 def test_main_py_has_cli_shebang():
     first_line = Path("main.py").read_text().splitlines()[0]
     assert first_line == "#!/usr/bin/env python3"
+def _confirmed_double_bottom_result(ticker: str, breakout_day: date) -> PatternResult:
+    return PatternResult(
+        pattern="double_bottom",
+        ticker=ticker,
+        confidence=0.95,
+        detected_on=breakout_day,
+        pivots={
+            "left_high": 120.0,
+            "first_trough": 90.0,
+            "middle_high": 105.0,
+            "second_trough": 88.0,
+            "breakout": 106.0,
+        },
+        pivot_dates={
+            "left_high": date(2025, 1, 10),
+            "first_trough": date(2025, 1, 24),
+            "middle_high": date(2025, 2, 18),
+            "second_trough": date(2025, 3, 12),
+            "breakout": breakout_day,
+        },
+        metadata={"state": "confirmed", "buy_point": 105.0},
+    )
+
+
+def _active_pre_breakout_double_bottom_result(
+    ticker: str,
+    *,
+    active_zone_pct_below_buy_point: float,
+) -> PatternResult:
+    return PatternResult(
+        pattern="double_bottom",
+        ticker=ticker,
+        confidence=0.88,
+        detected_on=date(2025, 4, 14),
+        pivots={
+            "left_high": 120.0,
+            "first_trough": 90.0,
+            "middle_high": 105.0,
+            "second_trough": 88.0,
+        },
+        pivot_dates={
+            "left_high": date(2025, 1, 10),
+            "first_trough": date(2025, 1, 24),
+            "middle_high": date(2025, 2, 18),
+            "second_trough": date(2025, 3, 12),
+        },
+        metadata={
+            "state": "active_pre_breakout",
+            "buy_point": 105.0,
+            "active_zone_pct_below_buy_point": active_zone_pct_below_buy_point,
+        },
+    )
+
+
+def test_is_recent_pattern_result_uses_breakout_date_for_confirmed_double_bottom():
+    latest_date = date(2025, 4, 14)
+    pattern_result = _confirmed_double_bottom_result("AAA", date(2025, 4, 3))
+
+    assert main._is_recent_pattern_result(pattern_result, latest_date=latest_date) is True
+
+
+def test_is_recent_pattern_result_treats_active_pre_breakout_double_bottom_as_current():
+    latest_date = date(2025, 4, 14)
+    pattern_result = _active_pre_breakout_double_bottom_result(
+        "AAA",
+        active_zone_pct_below_buy_point=0.08,
+    )
+
+    assert main._is_recent_pattern_result(pattern_result, latest_date=latest_date) is True
+
+
+def test_is_recent_pattern_result_rejects_inactive_pre_breakout_double_bottom():
+    latest_date = date(2025, 4, 14)
+    pattern_result = _active_pre_breakout_double_bottom_result(
+        "AAA",
+        active_zone_pct_below_buy_point=0.12,
+    )
+
+    assert main._is_recent_pattern_result(pattern_result, latest_date=latest_date) is False
+
+

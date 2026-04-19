@@ -185,14 +185,15 @@ Lookback: 45–65 trading days from end of df.
 ### patterns/double_bottom.py
 
 Conditions:
-1. Two troughs within 3% of each other in price
-2. Troughs separated by 15–50 trading days
-3. Middle peak ≥ 10% above trough levels
-4. Second trough volume ≤ first trough volume
+1. Detect an IBD-style W-shaped base using swing highs/lows, not close-only local minima
+2. `left_high` to `second_trough` base length must be at least 7 weeks (35 business days)
+3. Base depth from `left_high` to the lower trough must be 15%–33%
+4. Second trough must undercut the first by 0%–5%
+5. `middle_high` is the highest intraday peak between the troughs and is the buy point
+6. Pattern state is `confirmed` when price closes above `middle_high`, or `active_pre_breakout` when the latest close is within 10% below `middle_high`
+7. Breakout volume vs. 50-day average is confidence-only metadata, not a hard gate
 
-Confidence = conditions_met / 4
-
-Pivots: `first_trough`, `middle_high`, `second_trough`
+Pivots: `left_high`, `first_trough`, `middle_high`, `second_trough`, optional `breakout`
 
 ### patterns/vcp.py
 

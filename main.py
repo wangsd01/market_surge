@@ -319,3 +319,15 @@ def _select_universe_for_default_cli(universe: str) -> list[str]:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+    if pattern_result.pattern == "double_bottom":
+        state = pattern_result.metadata.get("state")
+        if state == "confirmed" and pattern_result.pivot_dates.get("breakout") is not None:
+            reference_date = pattern_result.pivot_dates["breakout"]
+            age_bdays = max(len(pd.bdate_range(reference_date, latest_date)) - 1, 0)
+            return age_bdays <= max_age_bdays
+        if state == "active_pre_breakout":
+            active_zone_pct = pattern_result.metadata.get("active_zone_pct_below_buy_point")
+            if active_zone_pct is None or float(active_zone_pct) > 0.10:
+                return False
+            return True
+
