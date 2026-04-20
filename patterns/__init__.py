@@ -1,6 +1,10 @@
+from datetime import date
+
 import pandas as pd
 
 from patterns.base import PatternResult
+
+RECENT_PATTERN_MAX_AGE_BDAYS = 10
 
 
 def _build_detectors():
@@ -17,6 +21,31 @@ def _build_detectors():
         High2Detector(),
         VCPDetector(),
     ]
+
+
+def is_recent_pattern_result(
+    pattern_result: PatternResult,
+    *,
+    latest_date: date,
+    max_age_bdays: int = RECENT_PATTERN_MAX_AGE_BDAYS,
+) -> bool:
+    if pattern_result.pattern == "double_bottom":
+        state = pattern_result.metadata.get("state")
+        if state == "confirmed" and pattern_result.pivot_dates.get("breakout") is not None:
+            reference_date = pattern_result.pivot_dates["breakout"]
+            age_bdays = max(len(pd.bdate_range(reference_date, latest_date)) - 1, 0)
+            return age_bdays <= max_age_bdays
+        if state == "active_pre_breakout":
+            reference_date = pattern_result.detected_on
+            age_bdays = max(len(pd.bdate_range(reference_date, latest_date)) - 1, 0)
+            return age_bdays <= max_age_bdays
+
+    pivot_dates = [d for d in pattern_result.pivot_dates.values() if d is not None]
+    reference_date = max(pivot_dates) if pivot_dates else pattern_result.detected_on
+    if reference_date > latest_date:
+        return True
+    age_bdays = max(len(pd.bdate_range(reference_date, latest_date)) - 1, 0)
+    return age_bdays <= max_age_bdays
 
 
 def detect_all(df: pd.DataFrame, ticker: str) -> list[PatternResult]:

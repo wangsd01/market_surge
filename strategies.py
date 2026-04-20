@@ -138,3 +138,7 @@ def _target_price(result: PatternResult, entry: float, stop: float, rr: float) -
     if prior_swing_high > entry * 1.01:
         return max(prior_swing_high, minimum_rr_target, measured_move_target)
     return max(minimum_rr_target, measured_move_target)
+
+
+def summary_reason(pattern: str, confidence: float, risk_reward: float, bounce_pct: float) -> str:
+    return f"{pattern} conf={confidence:.2f} rr={risk_reward:.1f} bounce={bounce_pct:.1f}%"

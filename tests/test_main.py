@@ -13,6 +13,7 @@ from pipeline import ScreeningArtifacts
 from patterns.base import PatternResult
 
 import main
+import patterns
 
 
 def _artifacts() -> ScreeningArtifacts:
@@ -86,6 +87,77 @@ def _pattern_result(ticker: str, pattern: str = "cup_handle") -> PatternResult:
             "handle_high": date(2025, 1, 6),
             "handle_low": date(2025, 1, 7),
         },
+    )
+
+
+def _double_bottom_pattern_result(ticker: str) -> PatternResult:
+    return PatternResult(
+        pattern="double_bottom",
+        ticker=ticker,
+        confidence=0.92,
+        detected_on=date(2025, 4, 10),
+        pivots={
+            "left_high": 120.0,
+            "first_trough": 90.0,
+            "middle_high": 105.0,
+            "second_trough": 91.0,
+        },
+        pivot_dates={
+            "left_high": date(2025, 3, 18),
+            "first_trough": date(2025, 3, 27),
+            "middle_high": date(2025, 4, 2),
+            "second_trough": date(2025, 4, 9),
+        },
+        metadata={"state": "active_pre_breakout"},
+    )
+
+
+def _flat_base_pattern_result(ticker: str) -> PatternResult:
+    return PatternResult(
+        pattern="flat_base",
+        ticker=ticker,
+        confidence=0.86,
+        detected_on=date(2025, 4, 10),
+        pivots={
+            "base_high": 100.0,
+            "base_low": 92.0,
+        },
+        pivot_dates={
+            "base_high": date(2025, 4, 2),
+            "base_low": date(2025, 4, 7),
+        },
+    )
+
+
+def _channel_pattern_result(ticker: str) -> PatternResult:
+    return PatternResult(
+        pattern="channel",
+        ticker=ticker,
+        confidence=0.85,
+        detected_on=date(2025, 4, 10),
+        pivots={
+            "channel_top": 115.0,
+            "channel_bottom": 95.0,
+        },
+        pivot_dates={
+            "channel_top": date(2025, 4, 8),
+            "channel_bottom": date(2025, 4, 8),
+        },
+    )
+
+
+def _support_resistance_pattern_result(ticker: str) -> PatternResult:
+    return PatternResult(
+        pattern="support_resistance",
+        ticker=ticker,
+        confidence=1.0,
+        detected_on=date(2025, 4, 10),
+        pivots={"level_1": 95.0, "level_2": 105.0},
+        pivot_dates={
+            "level_1": date(2025, 4, 7),
+            "level_2": date(2025, 4, 8),
+        },
+        metadata={"type_1": "support", "type_2": "resistance"},
     )
 
 
@@ -256,6 +328,7 @@ def test_build_parser_supports_decision_ticket_flags():
     assert args.format == "json"
     assert args.universe == "sp500"
     assert args.debug is True
+    assert args.save_detected_pattern_charts is False
 
 
 def test_build_parser_defaults_to_sp500_for_timed_cli():
@@ -306,7 +379,7 @@ def test_run_json_truncates_to_top_ten(monkeypatch, capsys):
         "main.build_candidates",
         lambda artifacts, args: [_candidate(chr(ord("A") + i) * 3, 0.95 - i * 0.05) for i in range(12)],
     )
-    monkeypatch.setattr("main._save_ticket_charts", lambda *args, **kwargs: [])
+    monkeypatch.setattr("charts.save_ticket_charts", lambda *args, **kwargs: [])
 
     args = main.build_parser().parse_args(
         ["--account-size", "10000", "--risk-pct", "0.01", "--max-loss-pct", "0.20", "--format", "json"]
@@ -324,7 +397,7 @@ def test_run_table_uses_ticket_renderer(monkeypatch):
 
     monkeypatch.setattr("main.build_screening_artifacts", lambda **_kwargs: _artifacts())
     monkeypatch.setattr("main.build_candidates", lambda artifacts, args: [_candidate("AAA", 0.9)])
-    monkeypatch.setattr("main._save_ticket_charts", lambda *args, **kwargs: [])
+    monkeypatch.setattr("charts.save_ticket_charts", lambda *args, **kwargs: [])
 
     def _fake_show_decision_tickets(tickets, plain):
         called["tickers"] = [ticket.ticker for ticket in tickets]
@@ -344,7 +417,7 @@ def test_run_passes_max_loss_pct_to_ticket_builder(monkeypatch):
 
     monkeypatch.setattr("main.build_screening_artifacts", lambda **_kwargs: _artifacts())
     monkeypatch.setattr("main.build_candidates", lambda artifacts, args: [_candidate("AAA", 0.9)])
-    monkeypatch.setattr("main._save_ticket_charts", lambda *args, **kwargs: [])
+    monkeypatch.setattr("charts.save_ticket_charts", lambda *args, **kwargs: [])
 
     def _fake_build_decision_tickets(candidates, **kwargs):
         captured["candidates"] = candidates
@@ -507,21 +580,21 @@ def test_is_recent_pattern_result_keeps_patterns_within_ten_trading_days():
     latest_date = date(2025, 4, 14)
     pattern_result = _recent_pattern_with_last_pivot("AAA", date(2025, 3, 31))
 
-    assert main._is_recent_pattern_result(pattern_result, latest_date=latest_date) is True
+    assert patterns.is_recent_pattern_result(pattern_result, latest_date=latest_date) is True
 
 
 def test_is_recent_pattern_result_rejects_patterns_older_than_ten_trading_days():
     latest_date = date(2025, 4, 14)
     pattern_result = _recent_pattern_with_last_pivot("AAA", date(2025, 3, 28))
 
-    assert main._is_recent_pattern_result(pattern_result, latest_date=latest_date) is False
+    assert patterns.is_recent_pattern_result(pattern_result, latest_date=latest_date) is False
 
 
 def test_is_recent_pattern_result_uses_breakout_date_for_confirmed_double_bottom():
     latest_date = date(2025, 4, 14)
     pattern_result = _confirmed_double_bottom_result("AAA", date(2025, 4, 3))
 
-    assert main._is_recent_pattern_result(pattern_result, latest_date=latest_date) is True
+    assert patterns.is_recent_pattern_result(pattern_result, latest_date=latest_date) is True
 
 
 def test_is_recent_pattern_result_treats_active_pre_breakout_double_bottom_as_current():
@@ -531,7 +604,7 @@ def test_is_recent_pattern_result_treats_active_pre_breakout_double_bottom_as_cu
         active_zone_pct_below_buy_point=0.08,
     )
 
-    assert main._is_recent_pattern_result(pattern_result, latest_date=latest_date) is True
+    assert patterns.is_recent_pattern_result(pattern_result, latest_date=latest_date) is True
 
 
 def test_is_recent_pattern_result_keeps_active_pre_breakout_double_bottom_focused_on_freshness_only():
@@ -541,7 +614,7 @@ def test_is_recent_pattern_result_keeps_active_pre_breakout_double_bottom_focuse
         active_zone_pct_below_buy_point=0.12,
     )
 
-    assert main._is_recent_pattern_result(pattern_result, latest_date=latest_date) is True
+    assert patterns.is_recent_pattern_result(pattern_result, latest_date=latest_date) is True
 
 
 def test_run_saves_chart_files_for_ranked_tickets(monkeypatch, tmp_path):
@@ -596,6 +669,145 @@ def test_run_saves_chart_files_for_ranked_tickets(monkeypatch, tmp_path):
         Path("runs") / ts / "charts" / "02_BBB_cup_handle.html",
     ]
     assert all(call["patterns"][0].pattern == "cup_handle" for call in chart_calls)
+
+
+def test_run_saves_detected_pattern_debug_charts_for_screened_tickers(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    raw_df = _raw_df_many(["AAA", "BBB"])
+    summary = pd.DataFrame(
+        {
+            "Ticker": ["AAA", "BBB"],
+            "current_price": [90.0, 88.0],
+            "bounce_pct": [25.0, 20.0],
+            "avg_vol_50d": [2_000_000.0, 2_000_000.0],
+            "dollar_vol": [100_000_000.0, 90_000_000.0],
+            "fifty_two_week_high": [120.0, 110.0],
+            "sector": ["Technology", "Technology"],
+            "industry": ["Software", "Hardware"],
+        }
+    )
+    artifacts = ScreeningArtifacts(
+        raw_df=raw_df,
+        summary_all=summary,
+        summary=summary,
+        benchmark_bounces={},
+    )
+    chart_calls: list[dict[str, object]] = []
+
+    class _FakeFigure:
+        def write_html(self, path: str) -> None:
+            chart_calls[-1]["path"] = path
+
+    def _fake_chart(ticker, df, patterns, setup=None, ticket=None, show=True, debug_patterns=False, pattern_statuses=None):
+        chart_calls.append(
+            {
+                "ticker": ticker,
+                "patterns": patterns,
+                "show": show,
+                "debug_patterns": debug_patterns,
+                "pattern_statuses": pattern_statuses,
+                "setup": setup,
+                "ticket": ticket,
+            }
+        )
+        return _FakeFigure()
+
+    def _fake_detect_all(df, ticker):
+        if ticker == "AAA":
+            return [_pattern_result(ticker), _double_bottom_pattern_result(ticker)]
+        return [_flat_base_pattern_result(ticker)]
+
+    monkeypatch.setattr("main.build_screening_artifacts", lambda **_kwargs: artifacts)
+    monkeypatch.setattr("main.build_candidates", lambda artifacts, args: [])
+    monkeypatch.setattr("charts.chart", _fake_chart)
+    monkeypatch.setattr("patterns.detect_all", _fake_detect_all)
+
+    args = main.build_parser().parse_args(
+        ["--account-size", "10000", "--risk-pct", "0.01", "--save-detected-pattern-charts"]
+    )
+
+    main.run(args)
+
+    run_dirs = list((tmp_path / "runs").iterdir())
+    assert len(run_dirs) == 1
+    ts = run_dirs[0].name
+    assert [call["ticker"] for call in chart_calls] == ["AAA", "BBB"]
+    assert all(call["show"] is False for call in chart_calls)
+    assert all(call["debug_patterns"] is True for call in chart_calls)
+    assert chart_calls[0]["setup"] is None
+    assert chart_calls[0]["ticket"] is None
+    assert [pattern.pattern for pattern in chart_calls[0]["patterns"]] == ["cup_handle", "double_bottom"]
+    assert [pattern.pattern for pattern in chart_calls[1]["patterns"]] == ["flat_base"]
+    assert chart_calls[0]["pattern_statuses"] == [
+        ("cup_handle", "non_actionable"),
+        ("double_bottom", "non_actionable"),
+    ]
+    assert [Path(call["path"]) for call in chart_calls] == [
+        Path("runs") / ts / "detected_patterns" / "AAA.html",
+        Path("runs") / ts / "detected_patterns" / "BBB.html",
+    ]
+
+
+def test_run_detected_pattern_debug_charts_exclude_channel_and_support_resistance_but_keep_stale_allowed_patterns(
+    monkeypatch, tmp_path
+):
+    monkeypatch.chdir(tmp_path)
+    raw_df = _raw_df_many(["AAA"])
+    summary = pd.DataFrame(
+        {
+            "Ticker": ["AAA"],
+            "current_price": [101.0],
+            "bounce_pct": [25.0],
+            "avg_vol_50d": [2_000_000.0],
+            "dollar_vol": [100_000_000.0],
+            "fifty_two_week_high": [120.0],
+            "sector": ["Technology"],
+            "industry": ["Software"],
+        }
+    )
+    artifacts = ScreeningArtifacts(
+        raw_df=raw_df,
+        summary_all=summary,
+        summary=summary,
+        benchmark_bounces={},
+    )
+    chart_calls: list[dict[str, object]] = []
+
+    class _FakeFigure:
+        def write_html(self, path: str) -> None:
+            chart_calls[-1]["path"] = path
+
+    def _fake_chart(ticker, df, patterns, setup=None, ticket=None, show=True, debug_patterns=False, pattern_statuses=None):
+        chart_calls.append(
+            {
+                "ticker": ticker,
+                "patterns": patterns,
+                "debug_patterns": debug_patterns,
+                "pattern_statuses": pattern_statuses,
+            }
+        )
+        return _FakeFigure()
+
+    monkeypatch.setattr("main.build_screening_artifacts", lambda **_kwargs: artifacts)
+    monkeypatch.setattr("main.build_candidates", lambda artifacts, args: [])
+    monkeypatch.setattr("charts.chart", _fake_chart)
+    monkeypatch.setattr(
+        "patterns.detect_all",
+        lambda df, ticker: [
+            _stale_pattern_result(ticker),
+            _channel_pattern_result(ticker),
+            _support_resistance_pattern_result(ticker),
+        ],
+    )
+
+    args = main.build_parser().parse_args(
+        ["--account-size", "10000", "--risk-pct", "0.01", "--save-detected-pattern-charts"]
+    )
+
+    main.run(args)
+
+    assert len(chart_calls) == 1
+    assert [pattern.pattern for pattern in chart_calls[0]["patterns"]] == ["double_bottom"]
 
 
 def test_run_debug_saves_all_valid_setups_before_top_ten(monkeypatch, tmp_path):
@@ -660,7 +872,7 @@ def test_run_sp500_auto_warms_missing_cached_universe(monkeypatch, capsys):
 
     monkeypatch.setattr("main.build_screening_artifacts", _fake_build_screening_artifacts)
     monkeypatch.setattr("main.build_candidates", lambda artifacts, args: [])
-    monkeypatch.setattr("main._save_ticket_charts", lambda *args, **kwargs: [])
+    monkeypatch.setattr("charts.save_ticket_charts", lambda *args, **kwargs: [])
 
     args = main.build_parser().parse_args(["--account-size", "10000", "--risk-pct", "0.01"])
 
@@ -688,7 +900,7 @@ def test_run_sp500_auto_warms_missing_price_cache(monkeypatch, capsys):
 
     monkeypatch.setattr("main.build_screening_artifacts", _fake_build_screening_artifacts)
     monkeypatch.setattr("main.build_candidates", lambda artifacts, args: [])
-    monkeypatch.setattr("main._save_ticket_charts", lambda *args, **kwargs: [])
+    monkeypatch.setattr("charts.save_ticket_charts", lambda *args, **kwargs: [])
 
     args = main.build_parser().parse_args(["--account-size", "10000", "--risk-pct", "0.01"])
 
@@ -718,7 +930,7 @@ def test_run_creates_timestamped_run_folder(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("main.build_screening_artifacts", lambda **_kwargs: _artifacts())
     monkeypatch.setattr("main.build_candidates", lambda artifacts, args: [])
-    monkeypatch.setattr("main._save_ticket_charts", lambda *args, **kwargs: [])
+    monkeypatch.setattr("charts.save_ticket_charts", lambda *args, **kwargs: [])
 
     args = main.build_parser().parse_args(["--account-size", "10000", "--risk-pct", "0.01", "--max-loss-pct", "0.20"])
     main.run(args)
@@ -788,7 +1000,7 @@ def test_run_saves_screened_ranking_csv(monkeypatch, tmp_path):
     )
     monkeypatch.setattr("main.build_screening_artifacts", lambda **_kwargs: artifacts)
     monkeypatch.setattr("main.build_candidates", lambda artifacts, args: [])
-    monkeypatch.setattr("main._save_ticket_charts", lambda *args, **kwargs: [])
+    monkeypatch.setattr("charts.save_ticket_charts", lambda *args, **kwargs: [])
 
     args = main.build_parser().parse_args(["--account-size", "10000", "--risk-pct", "0.01", "--max-loss-pct", "0.20"])
     main.run(args)

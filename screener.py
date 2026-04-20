@@ -202,6 +202,78 @@ def _sort_results(df: pd.DataFrame, sort_key: str) -> pd.DataFrame:
     return df.sort_values(sort_column, ascending=False, na_position="last").reset_index(drop=True)
 
 
+def filter_summary(
+    summary: pd.DataFrame,
+    *,
+    excluded_sections: set[str],
+    min_price: float,
+    min_pct_of_52wk_high: float,
+    min_dollar_vol: float,
+    sort_key: str = "bounce",
+) -> pd.DataFrame:
+    screened = _apply_section_filter(summary, excluded_sections=excluded_sections)
+    screened = apply_price_filter(screened, min_price=min_price)
+    screened = apply_52wk_high_filter(screened, min_pct_of_52wk_high=min_pct_of_52wk_high)
+    dollar_vol_df = apply_dollar_vol_filter(screened, min_dollar_vol=min_dollar_vol)
+    if dollar_vol_df.empty:
+        return dollar_vol_df
+    filtered = screened.merge(dollar_vol_df[["Ticker", "dollar_vol"]], on="Ticker", how="inner")
+    return _sort_results(filtered, sort_key=sort_key)
+
+
+def screen_strength(
+    *,
+    row: pd.Series,
+    filtered: pd.DataFrame,
+    benchmark_bounces: dict[str, float],
+    benchmark_mode: str,
+) -> float:
+    bounce_score = _normalized_rank(filtered["bounce_pct"], float(row["bounce_pct"]))
+    liquidity_score = _normalized_rank(filtered["dollar_vol"], float(row["dollar_vol"]))
+    bscore = _benchmark_score(filtered, float(row["bounce_pct"]), benchmark_bounces, benchmark_mode)
+    return 0.5 * bounce_score + 0.3 * bscore + 0.2 * liquidity_score
+
+
+def _benchmark_score(
+    filtered: pd.DataFrame,
+    bounce_pct: float,
+    benchmark_bounces: dict[str, float],
+    benchmark_mode: str,
+) -> float:
+    threshold = _benchmark_threshold(benchmark_bounces, benchmark_mode)
+    if threshold is None:
+        return 1.0
+    gaps = (pd.to_numeric(filtered["bounce_pct"], errors="coerce") - threshold).clip(lower=0.0)
+    current_gap = max(0.0, bounce_pct - threshold)
+    return _normalized_rank(gaps, current_gap)
+
+
+def _benchmark_threshold(benchmark_bounces: dict[str, float], benchmark_mode: str) -> float | None:
+    values = pd.Series(list(benchmark_bounces.values()), dtype=float).dropna()
+    if values.empty:
+        return None
+    mode = benchmark_mode.lower()
+    if mode == "all":
+        return float(values.max())
+    if mode == "any":
+        return float(values.min())
+    if mode in {"qld", "tqqq"}:
+        value = benchmark_bounces.get(mode.upper())
+        return None if value is None or pd.isna(value) else float(value)
+    raise ValueError(f"Unknown benchmark mode: {benchmark_mode}")
+
+
+def _normalized_rank(series: pd.Series, value: float) -> float:
+    values = pd.to_numeric(series, errors="coerce")
+    if values.empty:
+        return 0.0
+    if len(values) == 1:
+        return 1.0
+    augmented = pd.concat([values.reset_index(drop=True), pd.Series([value])], ignore_index=True)
+    rank = augmented.rank(method="average", ascending=True).iloc[-1]
+    return float((rank - 1) / (len(augmented) - 1))
+
+
 def _needs_pattern_history(args: argparse.Namespace) -> bool:
     return bool(args.patterns or args.chart or args.strategy)
 
@@ -402,6 +474,12 @@ def _handle_strategy(ticker: str, raw_df: pd.DataFrame) -> list:
     return setups
 
 
+def save_screened_ranking(filtered: pd.DataFrame, run_dir: Path) -> None:
+    if filtered.empty:
+        return
+    filtered.to_csv(run_dir / "screened_ranking.csv", index=False)
+
+
 def run(args: argparse.Namespace) -> pd.DataFrame:
     # Single-ticker modes: dispatch and return early
     if args.chart:
@@ -464,12 +542,14 @@ def run(args: argparse.Namespace) -> pd.DataFrame:
     raw_df = artifacts.raw_df
     summary_all = artifacts.summary_all
     benchmark_bounces = artifacts.benchmark_bounces
-    summary = artifacts.summary
-    summary = _apply_section_filter(summary, excluded_sections=_parse_excluded_sections(args.exclude_sections))
-    filtered = apply_price_filter(summary, min_price=args.min_price)
-    filtered = apply_52wk_high_filter(filtered, min_pct_of_52wk_high=args.min_pct_of_52wk_high)
-    filtered = apply_dollar_vol_filter(filtered, min_dollar_vol=args.min_dollar_vol)
-    filtered = _sort_results(filtered, sort_key=args.sort)
+    filtered = filter_summary(
+        artifacts.summary,
+        excluded_sections=_parse_excluded_sections(args.exclude_sections),
+        min_price=args.min_price,
+        min_pct_of_52wk_high=args.min_pct_of_52wk_high,
+        min_dollar_vol=args.min_dollar_vol,
+        sort_key=args.sort,
+    )
     csv_ranking = _build_csv_ranking(filtered, summary_all, benchmark_bounces=benchmark_bounces)
     csv_output = _format_csv_ranking_for_output(csv_ranking)
 

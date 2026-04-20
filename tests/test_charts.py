@@ -42,6 +42,27 @@ def _make_sr_pattern() -> PatternResult:
     )
 
 
+def _make_double_bottom_pattern() -> PatternResult:
+    return PatternResult(
+        pattern="double_bottom",
+        ticker="TEST",
+        confidence=0.9,
+        detected_on=date(2025, 3, 31),
+        pivots={
+            "left_high": 112.0,
+            "first_trough": 92.0,
+            "middle_high": 106.0,
+            "second_trough": 93.0,
+        },
+        pivot_dates={
+            "left_high": date(2025, 1, 8),
+            "first_trough": date(2025, 1, 24),
+            "middle_high": date(2025, 2, 10),
+            "second_trough": date(2025, 3, 3),
+        },
+    )
+
+
 class TestChart:
 
     def test_returns_figure(self, make_ohlcv):
@@ -254,3 +275,52 @@ class TestChart:
         assert grouped[0].xref == "paper"
         assert grouped[0].yref == "paper"
         assert grouped[0].x >= 0.9
+
+    def test_debug_patterns_prefix_annotations_and_add_status_block(self, make_ohlcv):
+        prices = [100.0 + i * 0.1 for i in range(60)]
+        df = make_ohlcv(prices)
+        fig = chart(
+            "TEST",
+            df,
+            [_make_pattern(), _make_double_bottom_pattern()],
+            show=False,
+            debug_patterns=True,
+            pattern_statuses=[
+                ("cup_handle", "non_actionable"),
+                ("double_bottom", "actionable"),
+            ],
+        )
+
+        annotation_texts = [a.text for a in (fig.layout.annotations or [])]
+
+        assert any("cup_handle:left_high" in (text or "") for text in annotation_texts)
+        assert any("double_bottom:middle_high" in (text or "") for text in annotation_texts)
+
+        grouped = [
+            a for a in (fig.layout.annotations or [])
+            if "cup_handle: non_actionable" in (a.text or "")
+            and "double_bottom: actionable" in (a.text or "")
+        ]
+        assert len(grouped) == 1
+        assert grouped[0].xref == "paper"
+        assert grouped[0].yref == "paper"
+
+    def test_debug_patterns_add_connecting_scatter_geometry(self, make_ohlcv):
+        prices = [100.0 + i * 0.1 for i in range(60)]
+        df = make_ohlcv(prices)
+        fig = chart(
+            "TEST",
+            df,
+            [_make_pattern(), _make_double_bottom_pattern()],
+            show=False,
+            debug_patterns=True,
+        )
+
+        scatter_lines = [
+            trace for trace in fig.data
+            if type(trace).__name__ == "Scatter" and "lines" in str(getattr(trace, "mode", ""))
+        ]
+
+        names = {getattr(trace, "name", "") for trace in scatter_lines}
+        assert "cup_handle pattern" in names
+        assert "double_bottom pattern" in names
