@@ -68,7 +68,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--extra-tickers",
-        default="",
+        default="SOXL",
         help="Comma-separated tickers to add to the universe (e.g. SOXL,UVXY).",
     )
     return parser

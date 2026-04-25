@@ -53,6 +53,8 @@ Behavior:
 - default is off
 - when enabled, `run()` saves one combined `.html` chart per ticker under:
   - `run_dir / "detected_patterns"`
+- the ticker set for this debug-save pass is exactly the final screened ticker set:
+  - `filtered["Ticker"]`
 - only allowed pattern types are included:
   - `cup_handle`
   - `double_bottom`
@@ -79,6 +81,8 @@ File naming:
 - `run_dir/detected_patterns/<ticker>.html`
 
 If a ticker has no allowed detected patterns, no file is written.
+
+Reference tickers or any other symbols not present in the final screened `filtered` dataframe are out of scope for this debug-save mode.
 
 ## Chart Overlay Behavior
 
@@ -160,7 +164,9 @@ Recommended content per row:
 - pattern name
 - `actionable` or `non_actionable`
 
-Use the existing actionability policy to classify status for display when possible.
+Use the existing actionability policy to classify status for display.
+
+Current price for status classification comes from the matching ticker row in the final screened `filtered` summary dataframe, using the same `current_price` field already used by candidate building.
 
 This status block is informational only. It must not change ticket generation or detector output.
 
@@ -180,13 +186,15 @@ The existing ticket chart flow should continue to render strategy and ticket ann
 `main.py` should gain a new save helper separate from `_save_ticket_charts()`.
 
 Expected behavior:
-1. identify the tickers relevant to the run
+1. iterate the exact ticker set from `filtered["Ticker"]`
 2. slice each ticker dataframe using the existing pattern-history slice helper
 3. call `detect_all(df, ticker)`
 4. filter results to the allowed pattern set
 5. if any allowed results remain, render one combined chart and save it to `detected_patterns/<ticker>.html`
 
 This helper should not depend on whether a ticker produced a candidate or ticket.
+
+This helper should not apply `_is_recent_pattern_result()` gating. If `detect_all()` returns an allowed pattern for a screened ticker, that pattern should appear on the debug chart even if it would be skipped later for candidate or ticket purposes.
 
 ## Test Plan
 
@@ -203,6 +211,7 @@ Add coverage for:
 Add coverage for:
 - `--save-detected-pattern-charts` creates `run_dir/detected_patterns/<ticker>.html`
 - non-actionable allowed patterns are still saved
+- stale-but-detected allowed patterns are still saved in this debug mode
 - `support_resistance` and `channel` are excluded from this save path
 - multiple allowed patterns for the same ticker produce one combined chart file
 - existing ticket chart saving remains unchanged
@@ -226,5 +235,6 @@ rtk pytest -q
 - This feature applies to the `main.py` decision-ticket flow.
 - Plotly `.html` output is sufficient for v1.
 - Combined per-ticker debug charts are more useful than one file per pattern.
+- The ticker scope is intentionally limited to the final screened `filtered` set for the current run.
 - `support_resistance` and `channel` add noise for this debugging use case and are intentionally excluded.
 - Existing dirty worktree files not related to this spec remain untouched.

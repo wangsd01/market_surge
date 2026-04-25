@@ -29,7 +29,7 @@ from screener import (
     _parse_excluded_sections,
     _slice_for_patterns,
     filter_summary,
-    save_screened_ranking,
+    save_csv_ranking,
     screen_strength,
 )
 
@@ -37,7 +37,7 @@ from screener import (
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Decision Ticket CLI")
     parser.add_argument("--low-start", default="2026-03-30")
-    parser.add_argument("--low-end", default="2026-04-19")
+    parser.add_argument("--low-end", default="2026-04-22")
     parser.add_argument("--min-price", type=float, default=5.0)
     parser.add_argument("--min-dollar-vol", type=float, default=50_000_000)
     parser.add_argument("--min-pct-of-52wk-high", type=float, default=0.70)
@@ -146,7 +146,7 @@ def run(args: argparse.Namespace):
         min_pct_of_52wk_high=args.min_pct_of_52wk_high,
         min_dollar_vol=args.min_dollar_vol,
     )
-    save_screened_ranking(filtered, run_dir)
+    save_csv_ranking(filtered, artifacts.summary_all, artifacts.benchmark_bounces, run_dir / "screened_ranking.csv")
 
     candidates = build_candidates(artifacts, args)
     all_valid_tickets = build_decision_tickets(

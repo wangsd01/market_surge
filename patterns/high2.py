@@ -17,6 +17,7 @@ _PULLBACK_FULL_SCORE_MAX = 0.50
 _PULLBACK_REJECT_MAX = 0.60
 _H1_MAX_BARS = 5
 _H2_MAX_BARS = 8
+_RECENT_UPTREND_LOOKBACK = 40
 
 
 class High2Detector(PatternDetector):
@@ -30,7 +31,8 @@ class High2Detector(PatternDetector):
         best_key: tuple[float, int] | None = None
         n = len(df)
 
-        for pullback_start_idx in range(1, n - 5):
+        uptrend_start = _recent_uptrend_start(df)
+        for pullback_start_idx in range(max(1, uptrend_start + 1), n - 5):
             ail_start_idx = _find_ail_start(df, pullback_start_idx)
             if ail_start_idx is None:
                 continue
@@ -147,6 +149,13 @@ class High2Detector(PatternDetector):
                     best_key = key
 
         return best
+
+
+def _recent_uptrend_start(df: pd.DataFrame) -> int:
+    """Return the index of the most recent swing low within the last _RECENT_UPTREND_LOOKBACK bars."""
+    n = len(df)
+    lookback_start = max(0, n - _RECENT_UPTREND_LOOKBACK)
+    return lookback_start + int(df["Low"].iloc[lookback_start:].argmin())
 
 
 def _find_ail_start(df: pd.DataFrame, pullback_start_idx: int) -> int | None:
