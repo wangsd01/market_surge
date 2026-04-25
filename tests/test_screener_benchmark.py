@@ -214,9 +214,8 @@ def test_format_csv_ranking_renames_avg_volume_and_rounds_fraction():
 
     out = _format_csv_ranking_for_output(ranked)
 
-    assert "avg_vol_50d_m" in out.columns
     assert "avg_vol_50d" not in out.columns
-    assert out.loc[0, "avg_vol_50d_m"] == 7.68
+    assert "avg_vol_50d_m" not in out.columns
     assert "dollar_vol_m" in out.columns
     assert "dollar_vol" not in out.columns
     assert out.loc[0, "dollar_vol_m"] == 12.35
@@ -277,3 +276,25 @@ def test_run_extends_fetch_history_for_pattern_modes(monkeypatch, tmp_path):
         - pd.offsets.BDay(PATTERN_LOOKBACK_DAYS - 1)
     ).date().isoformat()
     assert captured["low_start"] == expected
+
+
+def test_extra_tickers_included_in_fetch(monkeypatch, tmp_path):
+    parser = build_parser()
+    args = parser.parse_args(["--extra-tickers", "SOXL,TQQQ", "--output", str(tmp_path / "ranking.csv")])
+    captured = {"tickers": None}
+
+    def _mock_fetch_data(*, tickers, **kwargs):
+        captured["tickers"] = list(tickers)
+        return pd.DataFrame(columns=["Date", "Ticker", "Low", "Close", "Volume"])
+
+    monkeypatch.setattr("screener._today_market_date", lambda: pd.Timestamp("2026-04-12").date())
+    monkeypatch.setattr("screener._select_universe", lambda _universe: ["AAPL", "MSFT"])
+    monkeypatch.setattr("screener.fetch_data", _mock_fetch_data)
+    monkeypatch.setattr("screener.get_ticker_metadata", lambda *args, **kwargs: {})
+    monkeypatch.setattr("screener.show_results", lambda *args, **kwargs: None)
+    monkeypatch.setattr("screener.save_run", lambda *args, **kwargs: 1)
+
+    run(args)
+
+    assert "SOXL" in captured["tickers"]
+    assert "AAPL" in captured["tickers"]  # base universe preserved

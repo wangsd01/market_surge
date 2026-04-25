@@ -66,6 +66,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Print trade setup derived from detected patterns for TICKER.",
     )
+    parser.add_argument(
+        "--extra-tickers",
+        default="",
+        help="Comma-separated tickers to add to the universe (e.g. SOXL,UVXY).",
+    )
     return parser
 
 
@@ -386,8 +391,7 @@ def _build_csv_ranking(
 def _format_csv_ranking_for_output(ranked_df: pd.DataFrame) -> pd.DataFrame:
     out = ranked_df.copy()
     if "avg_vol_50d" in out.columns:
-        out = out.rename(columns={"avg_vol_50d": "avg_vol_50d_m"})
-        out["avg_vol_50d_m"] = pd.to_numeric(out["avg_vol_50d_m"], errors="coerce")
+        out = out.drop(columns=["avg_vol_50d"])
     if "dollar_vol" in out.columns:
         out["dollar_vol_m"] = pd.to_numeric(out["dollar_vol"], errors="coerce") / 1_000_000.0
         out = out.drop(columns=["dollar_vol"])
@@ -474,10 +478,17 @@ def _handle_strategy(ticker: str, raw_df: pd.DataFrame) -> list:
     return setups
 
 
-def save_screened_ranking(filtered: pd.DataFrame, run_dir: Path) -> None:
-    if filtered.empty:
-        return
-    filtered.to_csv(run_dir / "screened_ranking.csv", index=False)
+def save_csv_ranking(
+    filtered: pd.DataFrame,
+    summary_all: pd.DataFrame,
+    benchmark_bounces: dict[str, float],
+    path: Path,
+) -> None:
+    csv_output = _format_csv_ranking_for_output(
+        _build_csv_ranking(filtered, summary_all, benchmark_bounces=benchmark_bounces)
+    )
+    if not csv_output.empty:
+        csv_output.to_csv(path, index=False)
 
 
 def run(args: argparse.Namespace) -> pd.DataFrame:
@@ -525,6 +536,12 @@ def run(args: argparse.Namespace) -> pd.DataFrame:
             )
         return pd.DataFrame()
 
+    extra_tickers = [t.strip().upper() for t in getattr(args, "extra_tickers", "").split(",") if t.strip()]
+
+    def _select_universe_fn(universe: str) -> list[str]:
+        base = _select_universe(universe)
+        return list(dict.fromkeys(base + extra_tickers))
+
     artifacts = build_screening_artifacts(
         universe=args.universe,
         low_start=args.low_start,
@@ -534,7 +551,7 @@ def run(args: argparse.Namespace) -> pd.DataFrame:
         needs_pattern_history=_needs_pattern_history(args),
         cache_dir=Path("cache"),
         db_path=Path("market_surge.db"),
-        select_universe_fn=_select_universe,
+        select_universe_fn=_select_universe_fn,
         today_market_date_fn=_today_market_date,
         fetch_data_fn=fetch_data,
         metadata_fn=get_ticker_metadata,
@@ -550,11 +567,8 @@ def run(args: argparse.Namespace) -> pd.DataFrame:
         min_dollar_vol=args.min_dollar_vol,
         sort_key=args.sort,
     )
-    csv_ranking = _build_csv_ranking(filtered, summary_all, benchmark_bounces=benchmark_bounces)
-    csv_output = _format_csv_ranking_for_output(csv_ranking)
-
     if args.output:
-        csv_output.to_csv(args.output, index=False)
+        save_csv_ranking(filtered, summary_all, benchmark_bounces, Path(args.output))
 
     top_n = 10 if args.schedule else args.top
     show_results(filtered, top=top_n, plain=args.schedule, benchmark_bounces=benchmark_bounces)
