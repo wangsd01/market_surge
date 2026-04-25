@@ -115,7 +115,7 @@ def get_tickers() -> list[str]:
             continue
         if "-" in ticker:
             continue
-        if ticker.endswith(("W", "R", "P", "Q", "U")):
+        if len(ticker) >= 5 and ticker.endswith(("W", "R", "P", "Q", "U")):
             continue
 
         # SEC's exchange feed may not include SIC; if unavailable, keep ticker.
@@ -219,7 +219,10 @@ def get_ticker_metadata(
     conn = init_db(db_path)
     try:
         cached = {} if refresh else get_cached_ticker_metadata(conn, normalized)
-        missing = [ticker for ticker in normalized if ticker not in cached]
+        missing = [
+            ticker for ticker in normalized
+            if ticker not in cached or cached[ticker].get("fifty_two_week_high") is None
+        ]
         fetched: dict[str, dict[str, str]] = {}
         if missing:
             with ThreadPoolExecutor(max_workers=8) as executor:
@@ -360,17 +363,15 @@ def _download_all_batches(tickers: Sequence[str], low_start: str, end_date: str)
     batches = [tickers[i : i + 100] for i in range(0, len(tickers), 100)]
     frames: list[pd.DataFrame] = []
     unavailable: set[str] = set()
-    with ThreadPoolExecutor(max_workers=3) as executor:
-        futures = [
-            executor.submit(_download_batch_with_retry, batch, low_start, end_date)
-            for batch in batches
-            if batch
-        ]
-        for future in as_completed(futures):
-            frame, missing = future.result()
-            if frame is not None and not frame.empty:
-                frames.append(frame)
-            unavailable.update(missing)
+    for i, batch in enumerate(batches):
+        if not batch:
+            continue
+        if i > 0:
+            time.sleep(1.0)  # avoid Yahoo Finance rate limits between batches
+        frame, missing = _download_batch_with_retry(batch, low_start, end_date)
+        if frame is not None and not frame.empty:
+            frames.append(frame)
+        unavailable.update(missing)
 
     if not frames:
         return pd.DataFrame(columns=["Date", "Ticker", "Open", "High", "Low", "Close", "Volume"]), sorted(unavailable)
