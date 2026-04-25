@@ -1010,5 +1010,5 @@ def test_run_saves_screened_ranking_csv(monkeypatch, tmp_path):
     csv_path = run_dirs[0] / "screened_ranking.csv"
     assert csv_path.exists()
     df = pd.read_csv(csv_path)
-    # sorted by bounce_pct descending
-    assert list(df["Ticker"]) == ["BBB", "AAA"]
+    # sorted by bounce_pct descending; reference tickers (QLD, TQQQ) appended at the end
+    assert list(df["Ticker"])[:2] == ["BBB", "AAA"]

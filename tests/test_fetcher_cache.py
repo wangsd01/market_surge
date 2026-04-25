@@ -336,11 +336,12 @@ def test_fetch_data_does_not_redownload_provider_confirmed_symbol_specific_gap(t
 def test_fetch_data_skips_known_invalid_tickers_before_download(tmp_path, monkeypatch):
     db_path = tmp_path / "raw_cache.db"
     conn = init_db(db_path)
+    from datetime import UTC, datetime
+
+    now = datetime.now(UTC).replace(microsecond=0).isoformat(sep=" ")
     conn.execute(
-        """
-        INSERT INTO invalid_tickers (ticker, source, reason, detected_at)
-        VALUES ('BAD', 'yfinance', 'no data', '2026-04-12 00:00:00')
-        """
+        "INSERT INTO invalid_tickers (ticker, source, reason, detected_at) VALUES ('BAD', 'yfinance', 'no data', ?)",
+        (now,),
     )
     conn.commit()
     conn.close()

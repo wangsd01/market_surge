@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -455,14 +455,15 @@ def has_cached_coverage(
     return get_tickers_with_cached_coverage(conn, tickers, low_start, end_date) == set(tickers)
 
 
-def get_invalid_tickers(conn: sqlite3.Connection, source: str) -> set[str]:
+def get_invalid_tickers(conn: sqlite3.Connection, source: str, max_age_days: int = 7) -> set[str]:
+    cutoff = (datetime.now(UTC) - timedelta(days=max_age_days)).isoformat(sep=" ")
     rows = conn.execute(
         """
         SELECT ticker
         FROM invalid_tickers
-        WHERE source = ?
+        WHERE source = ? AND detected_at > ?
         """,
-        (source,),
+        (source, cutoff),
     ).fetchall()
     return {str(row[0]).upper() for row in rows if row and row[0]}
 
