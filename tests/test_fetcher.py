@@ -1,3 +1,5 @@
+import logging
+
 import pandas as pd
 import pytest
 
@@ -233,6 +235,33 @@ def test_get_ticker_metadata_reuses_cached_null_high(tmp_path, monkeypatch):
     result = get_ticker_metadata(["NULL"], db_path=db_path)
 
     assert result["NULL"]["fifty_two_week_high"] is None
+
+
+def test_get_ticker_metadata_saves_successes_and_warns_on_failures(tmp_path, monkeypatch, caplog):
+    db_path = tmp_path / "metadata.db"
+    good = {
+        "sector": "Technology",
+        "industry": "Semiconductors",
+        "fifty_two_week_high": 150.0,
+    }
+
+    def fetch(ticker):
+        if ticker in {"ZZZ", "AAA"}:
+            raise RuntimeError("Too Many Requests")
+        return ticker, good
+
+    monkeypatch.setattr("fetcher._fetch_ticker_metadata_for_ticker", fetch)
+
+    with caplog.at_level(logging.WARNING, logger="fetcher"):
+        result = get_ticker_metadata(["ZZZ", "GOOD", "AAA"], db_path=db_path)
+
+    assert result == {"GOOD": good}
+    assert caplog.messages == ["Yahoo metadata unavailable for 2 tickers: AAA, ZZZ"]
+
+    conn = init_db(db_path)
+    persisted = get_cached_ticker_metadata(conn, ["GOOD", "AAA", "ZZZ"])
+    conn.close()
+    assert persisted == {"GOOD": good}
 
 
 def test_get_sp500_tickers_cached_only_reads_local_cache(tmp_path):

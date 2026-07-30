@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -45,6 +46,8 @@ _BIOTECH_KEYWORDS = (
 )
 _BIOTECH_SIC_CODES = {2834, 2835, 2836}
 MARKET_TIMEZONE = ZoneInfo("America/New_York")
+
+logger = logging.getLogger(__name__)
 
 
 class CacheMissError(RuntimeError):
@@ -221,13 +224,29 @@ def get_ticker_metadata(
         cached = {} if refresh else get_cached_ticker_metadata(conn, normalized)
         missing = [ticker for ticker in normalized if ticker not in cached]
         fetched: dict[str, dict[str, str]] = {}
+        failed: list[str] = []
         if missing:
             with ThreadPoolExecutor(max_workers=8) as executor:
-                futures = [executor.submit(_fetch_ticker_metadata_for_ticker, ticker) for ticker in missing]
+                futures = {
+                    executor.submit(_fetch_ticker_metadata_for_ticker, ticker): ticker
+                    for ticker in missing
+                }
                 for future in as_completed(futures):
-                    ticker, metadata = future.result()
-                    fetched[ticker] = metadata
+                    ticker = futures[future]
+                    try:
+                        fetched_ticker, metadata = future.result()
+                    except Exception:
+                        failed.append(ticker)
+                        continue
+                    fetched[fetched_ticker] = metadata
             save_ticker_metadata(conn, fetched)
+        if failed:
+            failed = sorted(failed)
+            logger.warning(
+                "Yahoo metadata unavailable for %d tickers: %s",
+                len(failed),
+                ", ".join(failed),
+            )
         out = dict(cached)
         out.update(fetched)
         return out
