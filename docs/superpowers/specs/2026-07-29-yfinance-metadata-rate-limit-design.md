@@ -21,8 +21,8 @@ can produce a repeated request storm.
 - Successful metadata responses must be saved even if other ticker requests
   fail.
 - Failed tickers must be reported with a concise warning.
-- Tickers without a 52-week high remain excluded by the existing
-  metadata-dependent filter.
+- Existing filtering behavior remains unchanged: tickers without a 52-week
+  high continue to pass through the 52-week-high filter.
 - `--refresh` remains the explicit way to retry all requested metadata.
 
 ## Design
@@ -35,13 +35,13 @@ Each future will retain its ticker identity. Exceptions will be caught while
 collecting individual futures instead of escaping the collection loop.
 Successful results will be accumulated and persisted after all futures finish.
 Failures will be accumulated and emitted as one warning containing their count
-and ticker symbols. The function will return the union of cached and
-successfully fetched metadata.
+and deterministically sorted ticker symbols. The function will return the union
+of cached and successfully fetched metadata.
 
 The existing pipeline and filters require no behavioral change. A ticker absent
 from the returned metadata receives the existing default empty metadata during
-attachment, and its null 52-week high causes the existing 52-week-high filter
-to exclude it.
+attachment. Its null 52-week high continues to pass through the existing
+52-week-high filter.
 
 ## Alternatives Considered
 
@@ -66,7 +66,7 @@ Focused tests will verify:
    request.
 2. When one uncached ticker raises and another succeeds, the successful result
    is saved and returned, the failure does not escape, and a warning identifies
-   the failed ticker.
+   the failure count and deterministically sorted failed tickers.
 3. `refresh=True` still requests cached tickers.
 
 The full test suite will then verify that the changed failure handling does not
