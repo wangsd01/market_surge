@@ -264,6 +264,39 @@ def test_get_ticker_metadata_saves_successes_and_warns_on_failures(tmp_path, mon
     assert persisted == {"GOOD": good}
 
 
+def test_get_ticker_metadata_refreshes_cached_ticker(tmp_path, monkeypatch):
+    db_path = tmp_path / "metadata.db"
+    conn = init_db(db_path)
+    save_ticker_metadata(
+        conn,
+        {
+            "AAA": {
+                "sector": "Old",
+                "industry": "Old",
+                "fifty_two_week_high": None,
+            }
+        },
+    )
+    conn.close()
+    refreshed = {
+        "sector": "Technology",
+        "industry": "Software",
+        "fifty_two_week_high": 200.0,
+    }
+    calls = []
+
+    def fetch(ticker):
+        calls.append(ticker)
+        return ticker, refreshed
+
+    monkeypatch.setattr("fetcher._fetch_ticker_metadata_for_ticker", fetch)
+
+    result = get_ticker_metadata(["AAA"], db_path=db_path, refresh=True)
+
+    assert calls == ["AAA"]
+    assert result == {"AAA": refreshed}
+
+
 def test_get_sp500_tickers_cached_only_reads_local_cache(tmp_path):
     cache_path = tmp_path / "sp500_tickers.txt"
     cache_path.write_text("MSFT\nAAPL\n")
