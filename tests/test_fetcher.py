@@ -1,12 +1,14 @@
 import pandas as pd
 import pytest
 
+from db import get_ticker_metadata as get_cached_ticker_metadata, init_db, save_ticker_metadata
 from fetcher import (
     BIOTECH_SECTION,
     DEFAULT_SECTION,
     UniverseCacheMissError,
     _extract_ticker_metadata_from_info,
     get_sp500_tickers_cached_only,
+    get_ticker_metadata,
     get_ticker_sections,
     get_tickers,
     reshape_download_frame,
@@ -206,6 +208,31 @@ def test_extract_ticker_metadata_from_etf_info_uses_type_and_category():
     )
 
     assert metadata == {"sector": "ETF", "industry": "Trading--Leveraged Equity", "fifty_two_week_high": None}
+
+
+def test_get_ticker_metadata_reuses_cached_null_high(tmp_path, monkeypatch):
+    db_path = tmp_path / "metadata.db"
+    conn = init_db(db_path)
+    save_ticker_metadata(
+        conn,
+        {
+            "NULL": {
+                "sector": "Technology",
+                "industry": "Software",
+                "fifty_two_week_high": None,
+            }
+        },
+    )
+    conn.close()
+
+    def unexpected_fetch(_ticker):
+        raise AssertionError("cached ticker should not be fetched")
+
+    monkeypatch.setattr("fetcher._fetch_ticker_metadata_for_ticker", unexpected_fetch)
+
+    result = get_ticker_metadata(["NULL"], db_path=db_path)
+
+    assert result["NULL"]["fifty_two_week_high"] is None
 
 
 def test_get_sp500_tickers_cached_only_reads_local_cache(tmp_path):

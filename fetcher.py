@@ -219,10 +219,7 @@ def get_ticker_metadata(
     conn = init_db(db_path)
     try:
         cached = {} if refresh else get_cached_ticker_metadata(conn, normalized)
-        missing = [
-            ticker for ticker in normalized
-            if ticker not in cached or cached[ticker].get("fifty_two_week_high") is None
-        ]
+        missing = [ticker for ticker in normalized if ticker not in cached]
         fetched: dict[str, dict[str, str]] = {}
         if missing:
             with ThreadPoolExecutor(max_workers=8) as executor:
