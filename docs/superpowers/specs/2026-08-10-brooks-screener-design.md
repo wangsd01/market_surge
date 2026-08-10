@@ -232,7 +232,7 @@ Returns a `MarketCycleResult` dataclass: `current_cycle`, `prior_trend`, `tradin
 
 `FollowThroughResult` also carries `retracement_pct` and `gap_still_open`, always populated regardless of whether `window` is empty — this is why `follow_through()` itself never returns `None`; only its `follow_through_score` field does (both fields are meaningful from the breakout bar's own first day onward, unlike the bar-comparison follow-through conditions above which need at least one bar after the breakout):
 
-`retracement_pct = (breakout_high - min(Low[breakout_idx : latest_idx+1])) / (breakout_high - breakout_low)`; `0.0` if `breakout_idx==latest_idx`. Buckets: `<0.35` shallow, `0.35-0.60` moderate, `0.60-1.00` deep, `>=1.00` full retracement.
+`retracement_pct = (breakout_high - min(Low[breakout_idx+1 : latest_idx+1])) / (breakout_high - breakout_low)`; `0.0` if `breakout_idx==latest_idx` (the slice starts *after* the breakout bar, not at it — including the breakout bar's own low in the min() would make it a fixed floor, making `retracement_pct` structurally unable to fall below `1.0` even for a picture-perfect continuation with zero pullback). Buckets: `<0.35` shallow, `0.35-0.60` moderate, `0.60-1.00` deep, `>=1.00` full retracement.
 
 `gap_still_open`: `None` unless `true_gap_up` at the breakout bar; else `True` iff no bar since the breakout has traded a `Low <= prior_high` (the top of the gap zone).
 
