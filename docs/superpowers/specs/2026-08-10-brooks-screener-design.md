@@ -280,11 +280,11 @@ Six components, each mapped to `0..10`:
 - **reward_risk**: `min(10, rr_target_1 * 5)`, floored to near-`0` when `rr_target_1 < min_plausible_rr`.
 - **liquidity**: `min(10, dollar_vol / min_dollar_vol_for_full_liquidity * 10)`.
 
-**Penalty/bonus rules**: a data-driven list `[(name, condition_fn, component, points)]` (matching sections 13-14 of the requirements 1:1 — each named condition maps to exactly one rule with its own unit test), applied additively to the relevant component before the `0..10` clamp.
+**Penalty/bonus rules**: a data-driven list `[(name, component, condition_fn, points)]`, applied additively to the relevant component before the `0..10` clamp. **Implementation note**: v1 ships a starter set of ~6 representative rules (one or two per component) rather than full 1:1 coverage of every named condition in sections 13-14 — the architecture (a plain list of `(name, component, condition, points)` tuples) is designed so the remaining conditions can be appended incrementally, each with its own unit test, without touching `compute_scores`'s structure. Treat the full 13-14 catalog as a backlog, not a v1 requirement.
 
-`setup_quality_score = clip(0,10, market_context*0.25 + breakout_quality*0.20 + follow_through*0.15) / 0.6 * 10` (renormalized to a `0..10` scale using only its 3 components' relative weights).
+`setup_quality_score = clip(0,10, (market_context*0.25 + breakout_quality*0.20 + follow_through*0.15) / 0.6)` (renormalized to a `0..10` scale using only its 3 components' relative weights — since each component is already `0..10` and the weights sum to `0.6`, dividing by `0.6` alone rescales the weighted sum back to `0..10`; do **not** also multiply by 10, or the maximum becomes 100).
 
-`entry_quality_score = clip(0,10, current_setup*0.15 + reward_risk*0.15 + liquidity*0.10) / 0.40 * 10` (renormalized similarly).
+`entry_quality_score = clip(0,10, (current_setup*0.15 + reward_risk*0.15 + liquidity*0.10) / 0.40)` (renormalized the same way — no extra `* 10`).
 
 `trade_score = market_context*weight_market_context + breakout_quality*weight_breakout_quality + follow_through*weight_follow_through + current_setup*weight_current_setup + reward_risk*weight_reward_risk + liquidity*weight_liquidity` (weights sum to 1.0, so this is already `0..10`).
 
