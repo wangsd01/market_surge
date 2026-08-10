@@ -104,7 +104,8 @@ so nothing is hard-coded inline. Defaults (all overridable):
 | `tr_length_probe_window` | 15 | market_cycle |
 | `strong_trend_bar_ratio` | 0.65 | market_cycle |
 | `trend_bar_ratio` | 0.55 | market_cycle |
-| `trading_range_overlap_threshold` | 0.55 | market_cycle |
+| `bar_overlap_ratio_threshold` | 0.50 | market_cycle (per-bar-pair overlap ratio) |
+| `trading_range_overlap_threshold` | 0.55 | market_cycle (fraction of window pairs that must overlap) |
 | `max_range_channel_width_pct` | 0.25 | market_cycle |
 | `reversal_lookback_bars` | 5 | market_cycle |
 | `short_tr_bdays` | 10 | market_cycle / scoring |
@@ -131,8 +132,10 @@ so nothing is hard-coded inline. Defaults (all overridable):
 | `extended_consec_bull_bars` | 3 | extension |
 | `extended_atr_multiple` | 3.0 | extension |
 | `extended_ema20_distance_pct` | 0.12 | extension |
+| `breakout_pullback_max_age_bdays` | 5 | state |
 | `stop_buffer_pct` | 0.0005 | stops_targets |
 | `min_plausible_rr` | 1.0 | scoring (penalize below this) |
+| `min_entry_quality_for_ready_now` | 5.0 | state / output (WAIT_FIRST_PULLBACK rule and READY_NOW bucket) |
 | `weight_market_context` | 0.25 | scoring |
 | `weight_breakout_quality` | 0.20 | scoring |
 | `weight_follow_through` | 0.15 | scoring |
@@ -191,13 +194,13 @@ Given `df` (`DatetimeIndex`, `[Open, High, Low, Close, Volume]`), add columns:
 
 **Swings**: `scipy.signal.argrelextrema(High.values, np.greater_equal, order=config.swing_order)` for swing highs, same with `Low`/`np.less_equal` for swing lows, computed once over the full input `df` (this is safe — it never uses future bars beyond what's already asked for by `t`, since `t` is always the last bar of the slice given to the classifier for a given evaluation date). Discard swings whose move from the adjacent opposite-type swing is `< config.min_swing_pct`.
 
-**Window classification** `classify_cycle_window(window) -> str` operates on the trailing `config.cycle_window`-bar slice and computes: `bull_ratio` (bars where `Close>Open` / len), `bear_ratio` (bars where `Close<Open` / len), `ema20_slope` (`slope_20` at the window's last bar), `pct_above_ema20` (fraction of bars with `Close>ema20`), `overlap_frac` (fraction of consecutive bar pairs where `(min(High_i,High_{i-1}) - max(Low_i,Low_{i-1})) / min(range_i,range_{i-1}) >= config.trading_range_overlap_threshold`), `channel_width_pct` (`(window.High.max()-window.Low.min())/((window.High.max()+window.Low.min())/2)`), and HH/HL vs LH/LL swing counts within the window.
+**Window classification** `classify_cycle_window(window) -> str` operates on the trailing `config.cycle_window`-bar slice and computes: `bull_ratio` (bars where `Close>Open` / len), `bear_ratio` (bars where `Close<Open` / len), `ema20_slope` (`slope_20` at the window's last bar), `pct_above_ema20` (fraction of bars with `Close>ema20`), `overlap_frac` (fraction of consecutive bar pairs where `(min(High_i,High_{i-1}) - max(Low_i,Low_{i-1})) / min(range_i,range_{i-1}) >= config.bar_overlap_ratio_threshold` — a *per-pair* ratio, distinct from `trading_range_overlap_threshold` which gates the *window-level* fraction in rule 5 below), `channel_width_pct` (`(window.High.max()-window.Low.min())/((window.High.max()+window.Low.min())/2)`), and swing counts within the window: `hh_count`/`hl_count` (swing highs/lows higher than the immediately preceding swing high/low of the same type) vs `lh_count`/`ll_count` (lower than the preceding one). `hh_hl_dominant = (hh_count + hl_count) > (lh_count + ll_count)`; `lh_ll_dominant = (lh_count + ll_count) > (hh_count + hl_count)`. A window with no swings of one type, or an exact tie, is neither dominant (falls through to the trading-range/reversal rules below).
 
 Decision order (first match wins):
-1. `ema20_slope>0 and pct_above_ema20>=0.80 and bull_ratio>=strong_trend_bar_ratio and HH/HL-dominant` -> `STRONG_BULL_TREND`
-2. `ema20_slope>0 and pct_above_ema20>=0.60 and bull_ratio>=trend_bar_ratio and HH/HL-dominant` -> `BULL_TREND`
-3. `ema20_slope<0 and pct_above_ema20<=0.20 and bear_ratio>=strong_trend_bar_ratio and LH/LL-dominant` -> `STRONG_BEAR_TREND`
-4. `ema20_slope<0 and pct_above_ema20<=0.40 and bear_ratio>=trend_bar_ratio and LH/LL-dominant` -> `BEAR_TREND`
+1. `ema20_slope>0 and pct_above_ema20>=0.80 and bull_ratio>=strong_trend_bar_ratio and hh_hl_dominant` -> `STRONG_BULL_TREND`
+2. `ema20_slope>0 and pct_above_ema20>=0.60 and bull_ratio>=trend_bar_ratio and hh_hl_dominant` -> `BULL_TREND`
+3. `ema20_slope<0 and pct_above_ema20<=0.20 and bear_ratio>=strong_trend_bar_ratio and lh_ll_dominant` -> `STRONG_BEAR_TREND`
+4. `ema20_slope<0 and pct_above_ema20<=0.40 and bear_ratio>=trend_bar_ratio and lh_ll_dominant` -> `BEAR_TREND`
 5. `overlap_frac>=trading_range_overlap_threshold and channel_width_pct<=max_range_channel_width_pct`:
    - `bull_ratio>=0.55 or pct_above_ema20>=0.60` -> `BULLISH_TRADING_RANGE`
    - `bull_ratio<=0.45 or pct_above_ema20<=0.40` -> `BEARISH_TRADING_RANGE`
@@ -225,9 +228,9 @@ Returns a `MarketCycleResult` dataclass: `current_cycle`, `prior_trend`, `tradin
 
 `find_latest_breakout(df, market_cycle) -> BreakoutEvent | None`: scan indices `n-1` down to `max(0, n-breakout_search_bars)`; return the most recent bar where `breakout_score>=breakout_score_min_threshold` AND (`Close>recent_high_20` or `Close>recent_high_50`) — must actually clear a resistance level, not just look statistically strong. `BreakoutEvent` fields: `idx`, `date`, `breakout_score`, `is_strong`, `is_extreme`, `breakout_level` (highest resistance cleared), `gap_pct`, `true_gap_up`, `volume_ratio`.
 
-`follow_through(df, breakout_event) -> FollowThroughResult | None`: `window = df.iloc[breakout_event.idx+1 : breakout_event.idx+1+follow_through_bars]`; `None` if `window` empty (breakout is today, nothing to confirm yet — this is exactly the `STRONG_BREAKOUT` vs `STRONG_BREAKOUT_FOLLOW_THROUGH` boundary in `state.py`). Positive/negative rule lists analogous to `breakout_score`'s pattern (higher high/low vs breakout bar, close above breakout-bar midpoint, close above `breakout_level`, another `strong_bull_bar`, low overlap / large bear bar, close near low, breaks breakout bar's own low, gap re-filled, 2+ consecutive bear closes). `follow_through_score = clip((pos_weight - neg_weight)/max_pos_weight, -1.0, 1.0)`.
+`follow_through(df, breakout_event) -> FollowThroughResult`: always returns an object when `breakout_event is not None` (never `None` itself — see below for why). `window = df.iloc[breakout_event.idx+1 : breakout_event.idx+1+follow_through_bars]`. `follow_through_score: float | None` is `None` if `window` is empty (breakout is today, nothing to confirm yet — this is exactly the `STRONG_BREAKOUT` vs `STRONG_BREAKOUT_FOLLOW_THROUGH` boundary in `state.py`); otherwise computed from positive/negative rule lists analogous to `breakout_score`'s pattern (higher high/low vs breakout bar, close above breakout-bar midpoint, close above `breakout_level`, another `strong_bull_bar`, low overlap / large bear bar, close near low, breaks breakout bar's own low, gap re-filled, 2+ consecutive bear closes): `follow_through_score = clip((pos_weight - neg_weight)/max_pos_weight, -1.0, 1.0)`.
 
-`FollowThroughResult` also carries `retracement_pct` and `gap_still_open`, computed regardless of whether `window` is empty (both are meaningful from the breakout bar's own first day onward, unlike the bar-comparison follow-through conditions above which need at least one bar after the breakout):
+`FollowThroughResult` also carries `retracement_pct` and `gap_still_open`, always populated regardless of whether `window` is empty — this is why `follow_through()` itself never returns `None`; only its `follow_through_score` field does (both fields are meaningful from the breakout bar's own first day onward, unlike the bar-comparison follow-through conditions above which need at least one bar after the breakout):
 
 `retracement_pct = (breakout_high - min(Low[breakout_idx : latest_idx+1])) / (breakout_high - breakout_low)`; `0.0` if `breakout_idx==latest_idx`. Buckets: `<0.35` shallow, `0.35-0.60` moderate, `0.60-1.00` deep, `>=1.00` full retracement.
 
@@ -250,7 +253,7 @@ Returns a `MarketCycleResult` dataclass: `current_cycle`, `prior_trend`, `tradin
 
 `days_since_h1_trigger` / `days_since_h2_trigger` = `len(pd.bdate_range(trigger_date, latest_date)) - 1` (0 if trigger is today).
 
-Returns `H1H2State`: `h1`, `h2`, `h1_failed`, `h2_failed`, `h1_structural_failed`, `h2_structural_failed`, `days_since_h1_trigger`, `days_since_h2_trigger`, `forming` (`"h1"|"h2"|None`), `reset_from_failure`, `prior_failed_pattern`.
+Returns `H1H2State`: `h1: TriggerEvent | None`, `h2: TriggerEvent | None`, `h1_failed: bool`, `h2_failed: bool`, `h1_structural_failed: bool`, `h2_structural_failed: bool`, `days_since_h1_trigger: int | None` (`None` iff `h1 is None`), `days_since_h2_trigger: int | None` (`None` iff `h2 is None`), `forming` (`"h1"|"h2"|None`), `reset_from_failure: bool`, `prior_failed_pattern: str | None`. `days_since_h1_trigger == 0`-style equality checks against `None` are safe in Python (`None == 0` is `False`), but `0 < days_since_h1_trigger < h1_stale_bdays`-style chained *range* comparisons are **not** — `0 < None` raises `TypeError`. `state.py`'s rules 7 and 10 (the `*_TRIGGERED_RECENTLY` range checks) must therefore guard with an explicit `h1h2_state.h1 is not None` / `h1h2_state.h2 is not None` before the range comparison, not rely on short-circuiting.
 
 ## `extension.py`
 
@@ -287,23 +290,23 @@ Six components, each mapped to `0..10`:
 
 ## `state.py`
 
-`resolve_state(market_cycle, breakout_event, follow_through, h1h2_state, extension, entry_quality_score) -> str`, priority-ordered (first match wins):
+`resolve_state(market_cycle, breakout_event, follow_through, h1h2_state, extension, entry_quality_score) -> str`, priority-ordered (first match wins). Note the ordering: a specific, evented H1/H2 pullback-and-trigger (rules 6-12) outranks the coarse `STRONG_BREAKOUT_FOLLOW_THROUGH` window score (rule 14) — both *can* be true simultaneously (an H1 can trigger inside the `follow_through_bars` window), and the more specific signal should win, per the requirements' own philosophy ("strong breakout + shallow first pullback -> H1 can be actionable"). `STRONG_BREAKOUT_FOLLOW_THROUGH` is only reachable when no pullback has formed at all (`h1h2_state.h1 is None`), i.e. pure continuation with nothing more specific to report:
 
 1. `h1h2_state.h2_failed and not h1h2_state.reset_from_failure` -> `FAILED_H2`
 2. `h1h2_state.h1_failed and h1h2_state.h2 is None and not h1h2_state.reset_from_failure` -> `FAILED_H1`
-3. `breakout_event is not None and follow_through is not None and follow_through.follow_through_score < 0 and follow_through.retracement_pct >= 1.0` -> `FAILED_H1` (generic failed-breakout bucket per the earnings-scope decision; `warning` notes "breakout fully retraced")
+3. `breakout_event is not None and follow_through.follow_through_score is not None and follow_through.follow_through_score < 0 and follow_through.retracement_pct >= 1.0` -> `FAILED_H1` (generic failed-breakout bucket per the earnings-scope decision; `warning` notes "breakout fully retraced" rather than implying an H1 ever triggered)
 4. `extension.is_extended and h1h2_state.h2 is not None` -> `EXTENDED_AFTER_H2`
 5. `extension.is_extended and h1h2_state.h2 is None` -> `EXTENDED_AFTER_BREAKOUT`
-6. `breakout_event.idx == latest_idx` (breakout is today, no confirmation bars yet) -> `STRONG_BREAKOUT`
-7. `breakout_event is not None and (latest_idx - breakout_event.idx) <= follow_through_bars and follow_through.follow_through_score > 0` -> `STRONG_BREAKOUT_FOLLOW_THROUGH`
-8. `h1h2_state.days_since_h2_trigger == 0` -> `H2_TRIGGERED_TODAY`
-9. `0 < h1h2_state.days_since_h2_trigger < h2_stale_bdays` -> `H2_TRIGGERED_RECENTLY`
-10. `h1h2_state.forming == "h2"` -> `H2_FORMING`
-11. `h1h2_state.days_since_h1_trigger == 0 and h1h2_state.h2 is None` -> `H1_TRIGGERED_TODAY`
-12. `0 < h1h2_state.days_since_h1_trigger < h1_stale_bdays and h1h2_state.h2 is None` -> `H1_TRIGGERED_RECENTLY`
-13. `h1h2_state.forming == "h1" and breakout_event is not None and (latest_idx - breakout_event.idx) <= 5 and follow_through is not None and follow_through.retracement_pct <= moderate_retracement_max` -> `BREAKOUT_PULLBACK` (shallow, controlled pullback directly off a strong breakout)
-14. `h1h2_state.forming == "h1"` -> `H1_FORMING`
-15. `market_cycle.current_cycle in {STRONG_BULL_TREND, BULL_TREND} and entry_quality_score < 5.0` -> `WAIT_FIRST_PULLBACK`
+6. `h1h2_state.days_since_h2_trigger == 0` -> `H2_TRIGGERED_TODAY`
+7. `h1h2_state.h2 is not None and 0 < h1h2_state.days_since_h2_trigger < h2_stale_bdays` -> `H2_TRIGGERED_RECENTLY`
+8. `h1h2_state.forming == "h2"` -> `H2_FORMING`
+9. `h1h2_state.days_since_h1_trigger == 0 and h1h2_state.h2 is None` -> `H1_TRIGGERED_TODAY`
+10. `h1h2_state.h1 is not None and h1h2_state.h2 is None and 0 < h1h2_state.days_since_h1_trigger < h1_stale_bdays` -> `H1_TRIGGERED_RECENTLY`
+11. `h1h2_state.forming == "h1" and breakout_event is not None and (latest_idx - breakout_event.idx) <= breakout_pullback_max_age_bdays and follow_through.retracement_pct <= moderate_retracement_max` -> `BREAKOUT_PULLBACK` (shallow, controlled pullback directly off a strong breakout)
+12. `h1h2_state.forming == "h1"` -> `H1_FORMING`
+13. `breakout_event.idx == latest_idx` (breakout is today, no confirmation bars yet) -> `STRONG_BREAKOUT`
+14. `breakout_event is not None and (latest_idx - breakout_event.idx) <= follow_through_bars and follow_through.follow_through_score is not None and follow_through.follow_through_score > 0` -> `STRONG_BREAKOUT_FOLLOW_THROUGH`
+15. `market_cycle.current_cycle in {STRONG_BULL_TREND, BULL_TREND} and entry_quality_score < min_entry_quality_for_ready_now` -> `WAIT_FIRST_PULLBACK`
 16. fallback -> `TRADING_RANGE`
 
 ## `output.py`
