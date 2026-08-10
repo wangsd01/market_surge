@@ -290,22 +290,24 @@ Six components, each mapped to `0..10`:
 
 ## `state.py`
 
-`resolve_state(market_cycle, breakout_event, follow_through, h1h2_state, extension, entry_quality_score) -> str`, priority-ordered (first match wins). Note the ordering: a specific, evented H1/H2 pullback-and-trigger (rules 6-12) outranks the coarse `STRONG_BREAKOUT_FOLLOW_THROUGH` window score (rule 14) — both *can* be true simultaneously (an H1 can trigger inside the `follow_through_bars` window), and the more specific signal should win, per the requirements' own philosophy ("strong breakout + shallow first pullback -> H1 can be actionable"). `STRONG_BREAKOUT_FOLLOW_THROUGH` is only reachable when no pullback has formed at all (`h1h2_state.h1 is None`), i.e. pure continuation with nothing more specific to report:
+`resolve_state(market_cycle, breakout_event, follow_through, h1h2_state, extension, entry_quality_score) -> str`, priority-ordered (first match wins). Note the ordering: a specific, evented H1/H2 pullback-and-trigger (rules 6-12) outranks the coarse `STRONG_BREAKOUT_FOLLOW_THROUGH` window score (rule 14) — both *can* be true simultaneously (an H1 can trigger inside the `follow_through_bars` window), and the more specific signal should win, per the requirements' own philosophy ("strong breakout + shallow first pullback -> H1 can be actionable"). `STRONG_BREAKOUT_FOLLOW_THROUGH` is only reachable when no pullback has formed at all (`h1h2_state.h1 is None`), i.e. pure continuation with nothing more specific to report.
 
-1. `h1h2_state.h2_failed and not h1h2_state.reset_from_failure` -> `FAILED_H2`
-2. `h1h2_state.h1_failed and h1h2_state.h2 is None and not h1h2_state.reset_from_failure` -> `FAILED_H1`
-3. `breakout_event is not None and follow_through.follow_through_score is not None and follow_through.follow_through_score < 0 and follow_through.retracement_pct >= 1.0` -> `FAILED_H1` (generic failed-breakout bucket per the earnings-scope decision; `warning` notes "breakout fully retraced" rather than implying an H1 ever triggered)
-4. `extension.is_extended and h1h2_state.h2 is not None` -> `EXTENDED_AFTER_H2`
-5. `extension.is_extended and h1h2_state.h2 is None` -> `EXTENDED_AFTER_BREAKOUT`
-6. `h1h2_state.days_since_h2_trigger == 0` -> `H2_TRIGGERED_TODAY`
-7. `h1h2_state.h2 is not None and 0 < h1h2_state.days_since_h2_trigger < h2_stale_bdays` -> `H2_TRIGGERED_RECENTLY`
-8. `h1h2_state.forming == "h2"` -> `H2_FORMING`
-9. `h1h2_state.days_since_h1_trigger == 0 and h1h2_state.h2 is None` -> `H1_TRIGGERED_TODAY`
-10. `h1h2_state.h1 is not None and h1h2_state.h2 is None and 0 < h1h2_state.days_since_h1_trigger < h1_stale_bdays` -> `H1_TRIGGERED_RECENTLY`
-11. `h1h2_state.forming == "h1" and breakout_event is not None and (latest_idx - breakout_event.idx) <= breakout_pullback_max_age_bdays and follow_through.retracement_pct <= moderate_retracement_max` -> `BREAKOUT_PULLBACK` (shallow, controlled pullback directly off a strong breakout)
-12. `h1h2_state.forming == "h1"` -> `H1_FORMING`
-13. `breakout_event.idx == latest_idx` (breakout is today, no confirmation bars yet) -> `STRONG_BREAKOUT`
-14. `breakout_event is not None and (latest_idx - breakout_event.idx) <= follow_through_bars and follow_through.follow_through_score is not None and follow_through.follow_through_score > 0` -> `STRONG_BREAKOUT_FOLLOW_THROUGH`
+`h1h2_state` and `breakout_event` are each independently `None`-able (`compute_h1h2_state` returns `None` when no anchor exists at all; `find_latest_breakout` returns `None` when nothing qualifies) — every rule below that touches either must short-circuit on that `None` rather than assume it exists, since Python's `and` only skips later clauses, not earlier attribute access that would already have raised:
+
+1. `h1h2_state is not None and h1h2_state.h2_failed and not h1h2_state.reset_from_failure` -> `FAILED_H2`
+2. `h1h2_state is not None and h1h2_state.h1_failed and h1h2_state.h2 is None and not h1h2_state.reset_from_failure` -> `FAILED_H1`
+3. `breakout_event is not None and follow_through is not None and follow_through.follow_through_score is not None and follow_through.follow_through_score < 0 and follow_through.retracement_pct >= 1.0` -> `FAILED_H1` (generic failed-breakout bucket per the earnings-scope decision; `warning` notes "breakout fully retraced" rather than implying an H1 ever triggered)
+4. `extension.is_extended and h1h2_state is not None and h1h2_state.h2 is not None` -> `EXTENDED_AFTER_H2`
+5. `extension.is_extended and (h1h2_state is None or h1h2_state.h2 is None)` -> `EXTENDED_AFTER_BREAKOUT`
+6. `h1h2_state is not None and h1h2_state.days_since_h2_trigger == 0` -> `H2_TRIGGERED_TODAY`
+7. `h1h2_state is not None and h1h2_state.h2 is not None and 0 < h1h2_state.days_since_h2_trigger < h2_stale_bdays` -> `H2_TRIGGERED_RECENTLY`
+8. `h1h2_state is not None and h1h2_state.forming == "h2"` -> `H2_FORMING`
+9. `h1h2_state is not None and h1h2_state.days_since_h1_trigger == 0 and h1h2_state.h2 is None` -> `H1_TRIGGERED_TODAY`
+10. `h1h2_state is not None and h1h2_state.h1 is not None and h1h2_state.h2 is None and 0 < h1h2_state.days_since_h1_trigger < h1_stale_bdays` -> `H1_TRIGGERED_RECENTLY`
+11. `h1h2_state is not None and h1h2_state.forming == "h1" and breakout_event is not None and follow_through is not None and (latest_idx - breakout_event.idx) <= breakout_pullback_max_age_bdays and follow_through.retracement_pct <= moderate_retracement_max` -> `BREAKOUT_PULLBACK` (shallow, controlled pullback directly off a strong breakout)
+12. `h1h2_state is not None and h1h2_state.forming == "h1"` -> `H1_FORMING`
+13. `breakout_event is not None and breakout_event.idx == latest_idx` (breakout is today, no confirmation bars yet) -> `STRONG_BREAKOUT`
+14. `breakout_event is not None and follow_through is not None and (latest_idx - breakout_event.idx) <= follow_through_bars and follow_through.follow_through_score is not None and follow_through.follow_through_score > 0` -> `STRONG_BREAKOUT_FOLLOW_THROUGH`
 15. `market_cycle.current_cycle in {STRONG_BULL_TREND, BULL_TREND} and entry_quality_score < min_entry_quality_for_ready_now` -> `WAIT_FIRST_PULLBACK`
 16. fallback -> `TRADING_RANGE`
 
