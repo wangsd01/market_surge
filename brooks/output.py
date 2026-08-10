@@ -104,7 +104,9 @@ def _build_warning(
         )
     if extension.is_extended and extension.reason:
         warnings.append(f"Extended ({extension.reason}) -- do not chase.")
-    if targets.rr_target_1 < config.min_plausible_rr:
+    if targets.target_1 is None:
+        warnings.append("No H1/H2 trigger or breakout yet -- no structural stop or target to measure.")
+    elif targets.rr_target_1 < config.min_plausible_rr:
         warnings.append("Reward/risk to nearest resistance is below the plausible minimum.")
     return " ".join(warnings)
 

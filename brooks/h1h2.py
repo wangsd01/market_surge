@@ -35,18 +35,40 @@ class H1H2State:
 
 
 def find_anchor(df: pd.DataFrame, breakout_event: BreakoutEvent | None, config: BrooksConfig) -> int | None:
+    """Anchor scan_from_anchor's forward scan.
+
+    A recent breakout takes outright priority (this screener's primary use
+    case is post-breakout H1/H2 continuation), anchored at the highest high
+    since the breakout bar. Without one, fall back to the start of the
+    lookback window rather than any single "best" swing point picked by
+    argmax/argmin: scan_from_anchor's own "seeking_pullback" state already
+    walks forward through any number of rising bars undisturbed until the
+    first genuine pullback appears, so an earlier-than-necessary anchor never
+    changes the outcome for a clean uptrend -- but a *global* max/min of
+    High/Low within the window can land *after* the interesting structure
+    (e.g. a later bar that's even higher, or a failure that makes an even
+    lower low), silently skipping the very structure being anchored for.
+    """
     n = len(df)
     latest_idx = n - 1
 
     if breakout_event is not None and (latest_idx - breakout_event.idx) <= config.anchor_max_age_bdays:
         since_breakout = df["High"].iloc[breakout_event.idx :]
-        return breakout_event.idx + int(since_breakout.to_numpy().argmax())
+        breakout_anchor = breakout_event.idx + int(since_breakout.to_numpy().argmax())
+        # A currently-still-rising stock will almost always have today's bar
+        # qualify as "the breakout" (a new high plus a decent body alone gets
+        # most of the way to breakout_score_min_threshold), which leaves no
+        # room to scan forward from it. Falling through to the lookback-start
+        # fallback below in that case, rather than returning an anchor with
+        # nothing after it, is what lets H1/H2 (and EXTENDED_AFTER_H2) still
+        # resolve for stocks that are actively extending right now.
+        if breakout_anchor < latest_idx:
+            return breakout_anchor
 
     lookback_start = max(0, latest_idx - config.anchor_lookback_bars)
-    window = df["High"].iloc[lookback_start:]
-    if window.empty:
+    if lookback_start >= latest_idx:
         return None
-    return lookback_start + int(window.to_numpy().argmax())
+    return lookback_start
 
 
 def scan_from_anchor(df: pd.DataFrame, anchor_idx: int, config: BrooksConfig) -> H1H2State:
@@ -92,7 +114,7 @@ def scan_from_anchor(df: pd.DataFrame, anchor_idx: int, config: BrooksConfig) ->
         i += 1
 
     forming: str | None = None
-    if state == "in_pullback":
+    if state == "in_pullback" and trigger_count < 2:
         forming = "h1" if trigger_count == 0 else "h2"
 
     latest_date = df.index[n - 1].date()

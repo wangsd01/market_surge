@@ -115,7 +115,7 @@ def test_find_anchor_prefers_high_since_breakout_when_recent():
     assert anchor_idx == 4
 
 
-def test_find_anchor_falls_back_to_recent_swing_high_without_breakout():
+def test_find_anchor_falls_back_to_lookback_window_start_without_breakout():
     highs = [90, 95, 100, 98, 103, 101]
     lows = [85, 90, 95, 93, 98, 96]
     df = _df_from_highs_lows(highs, lows)
@@ -123,4 +123,7 @@ def test_find_anchor_falls_back_to_recent_swing_high_without_breakout():
 
     anchor_idx = find_anchor(df, breakout_event=None, config=config)
 
-    assert anchor_idx == 4  # highest High in the lookback window
+    # Not the highest High (idx 4) or lowest Low (idx 0, which happens to
+    # coincide here) picked by argmax/argmin -- the start of the lookback
+    # window, which scan_from_anchor can always walk forward from safely.
+    assert anchor_idx == 0
