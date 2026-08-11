@@ -44,9 +44,14 @@ def compute_stops(
     breakout_bar_stop = None
     gap_failure_stop = None
     if breakout_event is not None:
-        breakout_bar_stop = breakout_event.breakout_level * (1 - config.stop_buffer_pct)
-        if breakout_event.true_gap_up:
-            gap_failure_stop = breakout_event.breakout_level * (1 - config.stop_buffer_pct)
+        # breakout_level is the resistance price cleared, not a price the
+        # breakout bar actually traded at -- using it here (instead of the
+        # breakout bar's own Low) put the stop right next to the entry
+        # (both are derived from breakout_level), producing a near-zero risk
+        # and absurd reward/risk ratios for every breakout-only setup.
+        breakout_bar_stop = breakout_event.low * (1 - config.stop_buffer_pct)
+        if breakout_event.true_gap_up and breakout_event.prior_high is not None:
+            gap_failure_stop = breakout_event.prior_high * (1 - config.stop_buffer_pct)
 
     tight_stop = signal_bar_stop if signal_bar_stop is not None else breakout_bar_stop
     structural_stop = pullback_swing_stop if pullback_swing_stop is not None else breakout_bar_stop

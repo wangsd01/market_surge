@@ -15,7 +15,9 @@ class BreakoutEvent:
     breakout_score: float
     is_strong: bool
     is_extreme: bool
-    breakout_level: float
+    breakout_level: float  # resistance price level cleared -- NOT a stop candidate
+    low: float  # the breakout bar's own Low -- the real structural stop candidate
+    prior_high: float | None  # prior bar's High -- top of the gap zone, for gap_failure_stop
     gap_pct: float
     true_gap_up: bool
     volume_ratio: float
@@ -88,6 +90,7 @@ def find_latest_breakout(df: pd.DataFrame, config: BrooksConfig) -> BreakoutEven
             breakout_level = max(
                 v for v in (bar.get("recent_high_20"), bar.get("recent_high_50")) if v is not None and not pd.isna(v)
             )
+            prior_high = float(df.iloc[idx - 1]["High"]) if idx > 0 else None
             return BreakoutEvent(
                 idx=idx,
                 date=df.index[idx].date(),
@@ -95,6 +98,8 @@ def find_latest_breakout(df: pd.DataFrame, config: BrooksConfig) -> BreakoutEven
                 is_strong=strong_bull_bar(bar, config),
                 is_extreme=extreme_bull_breakout(bar, config),
                 breakout_level=float(breakout_level),
+                low=float(bar["Low"]),
+                prior_high=prior_high,
                 gap_pct=float(bar["gap_pct"]) if not pd.isna(bar["gap_pct"]) else 0.0,
                 true_gap_up=bool(bar["true_gap_up"]),
                 volume_ratio=float(bar["vol_ratio"]) if not pd.isna(bar["vol_ratio"]) else 0.0,

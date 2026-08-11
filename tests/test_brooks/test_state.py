@@ -16,7 +16,7 @@ def _cycle(cycle="TRADING_RANGE"):
 def _breakout(idx=LATEST_IDX, **kwargs):
     defaults = dict(
         date=None, breakout_score=0.9, is_strong=True, is_extreme=True,
-        breakout_level=100.0, gap_pct=0.05, true_gap_up=True, volume_ratio=2.0,
+        breakout_level=100.0, low=99.0, prior_high=98.5, gap_pct=0.05, true_gap_up=True, volume_ratio=2.0,
     )
     defaults.update(kwargs)
     return BreakoutEvent(idx=idx, **defaults)

@@ -23,7 +23,7 @@ def _minimal_kwargs(**overrides):
         market_cycle=MarketCycleResult(current_cycle="BULL_TREND", prior_trend=None, trading_range_length=0, bear_relevance=1.0),
         breakout_event=BreakoutEvent(
             idx=5, date=datetime.date(2025, 1, 6), breakout_score=0.9, is_strong=True, is_extreme=False,
-            breakout_level=95.0, gap_pct=0.03, true_gap_up=True, volume_ratio=1.8,
+            breakout_level=95.0, low=94.0, prior_high=93.5, gap_pct=0.03, true_gap_up=True, volume_ratio=1.8,
         ),
         follow_through=FollowThroughResult(follow_through_score=0.4, retracement_pct=0.2, gap_still_open=True),
         h1h2_state=H1H2State(

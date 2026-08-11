@@ -14,7 +14,7 @@ def _market_cycle(cycle="BULL_TREND", prior_trend=None, bear_relevance=1.0):
 def _breakout(score=0.9, is_strong=True, is_extreme=True, true_gap_up=True, volume_ratio=2.0):
     return BreakoutEvent(
         idx=10, date=None, breakout_score=score, is_strong=is_strong, is_extreme=is_extreme,
-        breakout_level=100.0, gap_pct=0.05, true_gap_up=true_gap_up, volume_ratio=volume_ratio,
+        breakout_level=100.0, low=99.0, prior_high=98.5, gap_pct=0.05, true_gap_up=true_gap_up, volume_ratio=volume_ratio,
     )
 
 

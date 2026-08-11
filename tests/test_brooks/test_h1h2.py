@@ -106,7 +106,7 @@ def test_find_anchor_prefers_high_since_breakout_when_recent():
     config = BrooksConfig()
     breakout_event = BreakoutEvent(
         idx=2, date=df.index[2].date(), breakout_score=0.9, is_strong=True, is_extreme=False,
-        breakout_level=95.0, gap_pct=0.0, true_gap_up=False, volume_ratio=1.0,
+        breakout_level=95.0, low=94.0, prior_high=93.5, gap_pct=0.0, true_gap_up=False, volume_ratio=1.0,
     )
 
     anchor_idx = find_anchor(df, breakout_event, config)
