@@ -159,3 +159,49 @@ def test_ranking_prefers_clean_pullback_over_extended():
     assert clean_h2_row["setup_state"] in {"H2_TRIGGERED_TODAY", "H2_TRIGGERED_RECENTLY"}
     assert extended_row["setup_state"] == "EXTENDED_AFTER_H2"
     assert clean_h2_row["trade_score"] > extended_row["trade_score"]
+
+
+def _to_long_raw_df(ticker: str, rows: list[dict]) -> pd.DataFrame:
+    wide = _to_df(rows).reset_index().rename(columns={"index": "Date"})
+    wide["Ticker"] = ticker
+    return wide[["Date", "Ticker", "Open", "High", "Low", "Close", "Volume"]]
+
+
+def test_save_ready_now_charts_writes_one_html_per_ticker(tmp_path):
+    rows = _quiet_uptrend()
+    tail_rows = rows + _h1_h2_tail(rows[-1]["Close"])
+    row = _run(tail_rows)
+    ready_df = pd.DataFrame([row])
+    raw_df = _to_long_raw_df("TEST", tail_rows)
+
+    saved = brooks_screener.save_ready_now_charts(ready_df, raw_df, tmp_path)
+
+    assert len(saved) == 1
+    assert saved[0].exists()
+    assert saved[0].name == "TEST.html"
+
+
+def test_save_ready_now_charts_draws_entry_stop_target_from_the_row(tmp_path, monkeypatch):
+    import plotly.graph_objects as go
+
+    rows = _quiet_uptrend()
+    tail_rows = rows + _h1_h2_tail(rows[-1]["Close"])
+    row = _run(tail_rows)
+    ready_df = pd.DataFrame([row])
+    raw_df = _to_long_raw_df("TEST", tail_rows)
+
+    captured = {}
+
+    def _fake_chart(ticker, df, patterns, setup=None, show=True):
+        captured["ticker"] = ticker
+        captured["setup"] = setup
+        return go.Figure()
+
+    monkeypatch.setattr(brooks_screener, "chart", _fake_chart)
+
+    brooks_screener.save_ready_now_charts(ready_df, raw_df, tmp_path)
+
+    assert captured["ticker"] == "TEST"
+    assert captured["setup"].entry == row["proposed_entry"]
+    assert captured["setup"].stop == row["structural_stop"]
+    assert captured["setup"].target == row["target_1"]

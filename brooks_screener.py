@@ -17,6 +17,10 @@ from brooks.output import ALL_OUTPUT_COLUMNS, assemble_row, build_watchlist_buck
 from brooks.scoring import compute_scores
 from brooks.state import resolve_state
 from brooks.stops_targets import TargetSet, compute_stops, compute_targets
+from charts import chart
+from strategies import TradeSetup
+
+CHART_LOOKBACK_BARS = 120
 
 DEFAULT_TICKERS_CSV = "ranking_all.csv"
 DEFAULT_TOP = 20
@@ -89,6 +93,56 @@ def _slice_for_ticker(ticker: str, raw_df: pd.DataFrame) -> pd.DataFrame | None:
     return group[["Open", "High", "Low", "Close", "Volume"]]
 
 
+def save_ready_now_charts(ready_df: pd.DataFrame, raw_df: pd.DataFrame, output_dir: str | Path) -> list[Path]:
+    """Render and save one candlestick chart per READY_NOW ticker, with the
+    proposed entry/stop/target drawn as horizontal lines (reuses charts.chart
+    and strategies.TradeSetup -- the same rendering used by the Decision
+    Ticket pipeline, just fed from Brooks' own entry/stop/target fields).
+
+    Prefers structural_stop over tight_stop, matching the rest of the
+    pipeline's "prefer the structural stop" convention. Skips a ticker if
+    its price history or any required entry/stop/target value is missing.
+    """
+    if ready_df is None or ready_df.empty:
+        return []
+    charts_dir = Path(output_dir) / "charts"
+    charts_dir.mkdir(parents=True, exist_ok=True)
+
+    saved_paths: list[Path] = []
+    for _, row in ready_df.iterrows():
+        ticker = str(row["ticker"])
+        df = _slice_for_ticker(ticker, raw_df)
+        if df is None:
+            continue
+
+        entry = row["proposed_entry"]
+        stop = row["structural_stop"] if pd.notna(row.get("structural_stop")) else row.get("tight_stop")
+        target = row["target_1"]
+        if pd.isna(entry) or pd.isna(stop) or pd.isna(target):
+            continue
+
+        entry = float(entry)
+        stop = float(stop)
+        target = float(target)
+        setup = TradeSetup(
+            pattern=str(row["setup_state"]),
+            ticker=ticker,
+            entry=entry,
+            stop=stop,
+            target=target,
+            risk_per_share=entry - stop,
+            risk_reward=float(row["rr_target_1"]) if pd.notna(row.get("rr_target_1")) else 0.0,
+            risk_pct=float(row["risk_pct"]) if pd.notna(row.get("risk_pct")) else (entry - stop) / entry,
+            invalidation_rule=f"Invalid if price closes below {stop:.2f}",
+        )
+
+        fig = chart(ticker, df.tail(CHART_LOOKBACK_BARS), [], setup=setup, show=False)
+        output_path = charts_dir / f"{ticker}.html"
+        fig.write_html(str(output_path))
+        saved_paths.append(output_path)
+    return saved_paths
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Al Brooks post-earnings bullish screener")
     parser.add_argument("--tickers-csv", default=DEFAULT_TICKERS_CSV)
@@ -132,6 +186,9 @@ def run(args: argparse.Namespace) -> pd.DataFrame:
         buckets = build_watchlist_buckets(result, config)
         for name, bucket_df in buckets.items():
             bucket_df.to_csv(output_dir / f"{name.lower()}.csv", index=False)
+        saved_charts = save_ready_now_charts(buckets["READY_NOW"], raw_df, output_dir)
+        if saved_charts:
+            print(f"Saved {len(saved_charts)} READY_NOW charts to {output_dir / 'charts'}")
 
     print(result.head(args.top).to_string(index=False))
     return result
