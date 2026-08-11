@@ -99,13 +99,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def run(args: argparse.Namespace) -> pd.DataFrame:
-    from fetcher import fetch_data
+    from fetcher import _today_market_date, fetch_data
 
     config = BrooksConfig()
     tickers_df = pd.read_csv(args.tickers_csv)
     tickers = tickers_df["Ticker"].dropna().astype(str).str.upper().unique().tolist()
 
-    end_date = datetime.today().date().isoformat()
+    end_date = _today_market_date().isoformat()
     fetch_start = (pd.Timestamp(end_date) - pd.offsets.BDay(config.lookback_bdays - 1)).date().isoformat()
     raw_df = fetch_data(
         tickers=tickers, low_start=fetch_start, end_date=end_date,

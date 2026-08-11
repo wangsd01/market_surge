@@ -1,10 +1,11 @@
 import sqlite3
+from datetime import datetime
 
 import pandas as pd
 import pytest
 
 from db import get_cached_price_history, get_invalid_tickers, has_cached_coverage, init_db, save_price_history
-from fetcher import CacheMissError, fetch_data, fetch_data_cached_only
+from fetcher import MARKET_TIMEZONE, CacheMissError, fetch_data, fetch_data_cached_only
 
 
 def _sample_prices() -> pd.DataFrame:
@@ -404,6 +405,11 @@ def test_fetch_data_does_not_store_or_return_today_rows(tmp_path, monkeypatch):
         return sample.copy(), []
 
     monkeypatch.setattr("fetcher._download_all_batches", _mock_download)
+    # 10am ET, before the 4pm close -- today's row must still be excluded.
+    # _market_now is the single source of "now" _today_market_date and the
+    # close-aware cutoff logic both derive from; mocking only one and not
+    # the other leaves them disagreeing about what day it is.
+    monkeypatch.setattr("fetcher._market_now", lambda: datetime(2026, 4, 12, 10, 0, tzinfo=MARKET_TIMEZONE))
     monkeypatch.setattr("fetcher._today_market_date", lambda: pd.Timestamp("2026-04-12").date())
 
     out = fetch_data(

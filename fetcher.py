@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Iterable, Sequence
 import os
 from io import StringIO
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -46,6 +46,7 @@ _BIOTECH_KEYWORDS = (
 )
 _BIOTECH_SIC_CODES = {2834, 2835, 2836}
 MARKET_TIMEZONE = ZoneInfo("America/New_York")
+MARKET_CLOSE_HOUR_ET = 16  # NYSE regular session close, 4:00 PM ET
 
 logger = logging.getLogger(__name__)
 
@@ -66,8 +67,60 @@ class UniverseCacheMissError(RuntimeError):
         super().__init__(f"Cached universe '{universe}' not found at {self.cache_path}")
 
 
+def _market_now() -> datetime:
+    """The single source of "now" for every market-date/close-time check below.
+
+    Kept as its own function (rather than every caller calling
+    datetime.now(MARKET_TIMEZONE) directly) so a test can monkeypatch this
+    one function and have _today_market_date, _market_has_closed_today,
+    _fetch_cutoff_date, and _yfinance_end_date all become consistently
+    mockable together -- mocking only one of them and not the others is what
+    silently breaks the date arithmetic.
+    """
+    return datetime.now(MARKET_TIMEZONE)
+
+
 def _today_market_date():
-    return datetime.now(MARKET_TIMEZONE).date()
+    return _market_now().date()
+
+
+def _market_has_closed_today(now: datetime | None = None) -> bool:
+    """True once today's regular NYSE session (4:00 PM ET) has closed."""
+    current = now if now is not None else _market_now()
+    return current.hour >= MARKET_CLOSE_HOUR_ET
+
+
+def _fetch_cutoff_date(now: datetime | None = None) -> date:
+    """Exclusive upper bound for daily bars trusted as complete.
+
+    Before market close, today's daily candle is still forming, so the
+    cutoff is today itself (only data through yesterday is trusted). Once
+    the session has closed, today's candle is final, so the cutoff moves to
+    tomorrow -- today is now includable.
+    """
+    current = now if now is not None else _market_now()
+    today = current.date()
+    if _market_has_closed_today(current):
+        return today + timedelta(days=1)
+    return today
+
+
+def _yfinance_end_date(end_date: str, now: datetime | None = None) -> str:
+    """Adjust a caller-requested end_date for yfinance's exclusive `end` bound.
+
+    yfinance's `end` parameter excludes the end date itself. When the caller
+    asked for "up through today" and the market has since closed, bump the
+    value forward one day so today's now-final daily bar actually comes
+    back, instead of always silently stopping at yesterday. Any other
+    requested end_date (a fixed historical range, or "today" while the
+    market is still open) is left untouched.
+    """
+    current = now if now is not None else _market_now()
+    requested = pd.to_datetime(end_date).date()
+    if requested != current.date():
+        return end_date
+    cutoff = _fetch_cutoff_date(current)
+    return cutoff.isoformat() if cutoff > requested else end_date
 
 
 def _fetch_sec_payload() -> tuple[list[Sequence[object]], dict[str, int]]:
@@ -411,7 +464,24 @@ def fetch_data(
     sqlite_path = Path(db_path) if db_path is not None else (cache_root / "raw_cache.db")
     conn = init_db(sqlite_path)
     try:
-        delete_price_history_for_date(conn, _today_market_date().isoformat())
+        # Every date boundary here is exclusive (yfinance's `end`, and this
+        # codebase's own `date < ?` convention in db.py for both
+        # price-history reads and coverage checks). effective_end_date bumps
+        # the caller's end_date forward by one day whenever it was "today"
+        # and the market has since closed, so the yfinance request and the
+        # cache read/coverage-check/coverage-save calls below all agree that
+        # today is now a fetchable, storable date. It is NOT used to decide
+        # what's safe to keep after downloading -- see the save-time filter
+        # further down, which uses _fetch_cutoff_date() instead and must stay
+        # independent of whatever end_date the caller asked for.
+        effective_end_date = _yfinance_end_date(end_date)
+
+        # Only purge today's cached row while the session is still open: an
+        # intraday snapshot is a moving target and must never be trusted as
+        # final. Once the market has closed, a cached today row is final and
+        # purging it on every call would force a wasted refetch every time.
+        if not _market_has_closed_today():
+            delete_price_history_for_date(conn, _today_market_date().isoformat())
         invalid_source = "yfinance"
         known_invalid = get_invalid_tickers(conn, invalid_source)
         ticker_list = [
@@ -420,31 +490,37 @@ def fetch_data(
             if ticker not in known_invalid
         ]
         if not refresh:
-            cached = get_cached_price_history(conn, ticker_list, low_start, end_date)
-            covered_tickers = get_tickers_with_cached_coverage(conn, ticker_list, low_start, end_date)
+            cached = get_cached_price_history(conn, ticker_list, low_start, effective_end_date)
+            covered_tickers = get_tickers_with_cached_coverage(conn, ticker_list, low_start, effective_end_date)
             missing = [ticker for ticker in ticker_list if ticker not in covered_tickers]
             if not missing:
                 return cached
         else:
             missing = ticker_list
 
-        downloaded, unavailable = _download_all_batches(missing, low_start, end_date) if missing else (pd.DataFrame(), [])
+        downloaded, unavailable = _download_all_batches(missing, low_start, effective_end_date) if missing else (pd.DataFrame(), [])
         if unavailable:
             save_invalid_tickers(
                 conn,
                 unavailable,
                 source=invalid_source,
-                reason=f"Yahoo returned no data for requested range {low_start}..{end_date}",
+                reason=f"Yahoo returned no data for requested range {low_start}..{effective_end_date}",
             )
         if downloaded is not None and not downloaded.empty:
+            # This gate is deliberately independent of effective_end_date:
+            # even a caller-requested end_date beyond today must never let
+            # an unconfirmed, still-forming "today" bar into the cache.
+            # effective_end_date only widens the *query* boundary (yfinance
+            # request, cache read/coverage) once today is actually final;
+            # it must never be used to decide what's safe to *save*.
             downloaded = downloaded.loc[
-                pd.to_datetime(downloaded["Date"]).dt.date < _today_market_date()
+                pd.to_datetime(downloaded["Date"]).dt.date < _fetch_cutoff_date()
             ].copy()
             observed_tickers = list(_observed_tickers(downloaded))
             delete_invalid_tickers(conn, observed_tickers, source=invalid_source)
             save_price_history(conn, downloaded)
-            save_price_coverage(conn, observed_tickers, low_start, end_date, source=invalid_source)
-        return get_cached_price_history(conn, ticker_list, low_start, end_date)
+            save_price_coverage(conn, observed_tickers, low_start, effective_end_date, source=invalid_source)
+        return get_cached_price_history(conn, ticker_list, low_start, effective_end_date)
     finally:
         conn.close()
 
@@ -463,7 +539,9 @@ def fetch_data_cached_only(
     conn = init_db(sqlite_path)
     try:
         _ = refresh
-        delete_price_history_for_date(conn, _today_market_date().isoformat())
+        effective_end_date = _yfinance_end_date(end_date)
+        if not _market_has_closed_today():
+            delete_price_history_for_date(conn, _today_market_date().isoformat())
         invalid_source = "yfinance"
         known_invalid = get_invalid_tickers(conn, invalid_source)
         ticker_list = [
@@ -471,8 +549,8 @@ def fetch_data_cached_only(
             for ticker in dict.fromkeys(str(symbol).strip().upper() for symbol in tickers if str(symbol).strip())
             if ticker not in known_invalid
         ]
-        cached = get_cached_price_history(conn, ticker_list, low_start, end_date)
-        covered_tickers = get_tickers_with_cached_coverage(conn, ticker_list, low_start, end_date)
+        cached = get_cached_price_history(conn, ticker_list, low_start, effective_end_date)
+        covered_tickers = get_tickers_with_cached_coverage(conn, ticker_list, low_start, effective_end_date)
         missing = [ticker for ticker in ticker_list if ticker not in covered_tickers]
         if missing:
             raise CacheMissError(missing, low_start=low_start, end_date=end_date)

@@ -1,20 +1,29 @@
 import logging
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import pytest
 
+import fetcher
 from db import get_ticker_metadata as get_cached_ticker_metadata, init_db, save_ticker_metadata
 from fetcher import (
     BIOTECH_SECTION,
     DEFAULT_SECTION,
     UniverseCacheMissError,
     _extract_ticker_metadata_from_info,
+    _fetch_cutoff_date,
+    _market_has_closed_today,
+    _yfinance_end_date,
+    fetch_data,
     get_sp500_tickers_cached_only,
     get_ticker_metadata,
     get_ticker_sections,
     get_tickers,
     reshape_download_frame,
 )
+
+_ET = ZoneInfo("America/New_York")
 
 
 def _mock_multiindex_df():
@@ -309,3 +318,93 @@ def test_get_sp500_tickers_cached_only_reads_local_cache(tmp_path):
 def test_get_sp500_tickers_cached_only_raises_when_missing(tmp_path):
     with pytest.raises(UniverseCacheMissError):
         get_sp500_tickers_cached_only(tmp_path / "missing.txt")
+
+
+def test_market_has_closed_today_before_close():
+    now = datetime(2026, 8, 10, 14, 30, tzinfo=_ET)  # 2:30pm ET
+    assert _market_has_closed_today(now) is False
+
+
+def test_market_has_closed_today_after_close():
+    now = datetime(2026, 8, 10, 16, 30, tzinfo=_ET)  # 4:30pm ET
+    assert _market_has_closed_today(now) is True
+
+
+def test_fetch_cutoff_date_excludes_today_before_close():
+    now = datetime(2026, 8, 10, 14, 30, tzinfo=_ET)
+    assert _fetch_cutoff_date(now).isoformat() == "2026-08-10"
+
+
+def test_fetch_cutoff_date_includes_today_after_close():
+    now = datetime(2026, 8, 10, 16, 30, tzinfo=_ET)
+    assert _fetch_cutoff_date(now).isoformat() == "2026-08-11"
+
+
+def test_yfinance_end_date_bumps_todays_request_after_close():
+    now = datetime(2026, 8, 10, 16, 30, tzinfo=_ET)
+    assert _yfinance_end_date("2026-08-10", now) == "2026-08-11"
+
+
+def test_yfinance_end_date_leaves_todays_request_alone_before_close():
+    now = datetime(2026, 8, 10, 14, 30, tzinfo=_ET)
+    assert _yfinance_end_date("2026-08-10", now) == "2026-08-10"
+
+
+def test_yfinance_end_date_leaves_historical_request_alone_after_close():
+    now = datetime(2026, 8, 10, 16, 30, tzinfo=_ET)
+    assert _yfinance_end_date("2026-07-01", now) == "2026-07-01"
+
+
+class _FixedDatetime(datetime):
+    """Patches fetcher.datetime.now(...) to a fixed instant for fetch_data tests."""
+
+    _fixed_now: datetime
+
+    @classmethod
+    def now(cls, tz=None):
+        return cls._fixed_now.astimezone(tz) if tz else cls._fixed_now
+
+
+def _mock_download_including_today(requested, start, end, **_kwargs):
+    # Ignores the requested `end` bound entirely, simulating yfinance having
+    # already posted today's now-closed bar -- this isolates fetch_data's own
+    # post-download filter as the thing under test, independent of whatever
+    # end value was actually sent to yfinance.
+    dates = pd.to_datetime(["2026-08-07", "2026-08-10"])
+    columns = pd.MultiIndex.from_tuples(
+        [(field, "AAPL") for field in ("Open", "High", "Low", "Close", "Volume")],
+        names=["Field", "Ticker"],
+    )
+    return pd.DataFrame(
+        [[100.0, 101.0, 99.0, 100.5, 1_000_000], [102.0, 103.0, 101.0, 102.5, 1_100_000]],
+        index=dates,
+        columns=columns,
+    )
+
+
+def test_fetch_data_excludes_todays_bar_before_close(tmp_path, monkeypatch):
+    fixed_now = datetime(2026, 8, 10, 14, 30, tzinfo=_ET)  # 2:30pm ET, market open
+    _FixedDatetime._fixed_now = fixed_now
+    monkeypatch.setattr(fetcher, "datetime", _FixedDatetime)
+    monkeypatch.setattr(fetcher.yf, "download", _mock_download_including_today)
+
+    result = fetch_data(
+        tickers=["AAPL"], low_start="2026-08-01", end_date="2026-08-10",
+        cache_dir=tmp_path, db_path=tmp_path / "test.db",
+    )
+
+    assert set(pd.to_datetime(result["Date"]).dt.date.astype(str)) == {"2026-08-07"}
+
+
+def test_fetch_data_includes_todays_bar_after_close(tmp_path, monkeypatch):
+    fixed_now = datetime(2026, 8, 10, 16, 30, tzinfo=_ET)  # 4:30pm ET, market closed
+    _FixedDatetime._fixed_now = fixed_now
+    monkeypatch.setattr(fetcher, "datetime", _FixedDatetime)
+    monkeypatch.setattr(fetcher.yf, "download", _mock_download_including_today)
+
+    result = fetch_data(
+        tickers=["AAPL"], low_start="2026-08-01", end_date="2026-08-10",
+        cache_dir=tmp_path, db_path=tmp_path / "test.db",
+    )
+
+    assert set(pd.to_datetime(result["Date"]).dt.date.astype(str)) == {"2026-08-07", "2026-08-10"}
