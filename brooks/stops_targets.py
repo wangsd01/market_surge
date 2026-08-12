@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import pandas as pd
 
 from brooks.breakout import BreakoutEvent
-from brooks.config import BrooksConfig
+from brooks.config import BrooksConfig, tick_buffer
 from brooks.h1h2 import H1H2State
 
 
@@ -38,8 +38,8 @@ def compute_stops(
     signal_bar_stop = None
     pullback_swing_stop = None
     if trigger is not None:
-        signal_bar_stop = trigger.signal_bar_low * (1 - config.stop_buffer_pct)
-        pullback_swing_stop = trigger.pullback_leg_low * (1 - config.stop_buffer_pct)
+        signal_bar_stop = trigger.signal_bar_low - tick_buffer(trigger.signal_bar_low, config)
+        pullback_swing_stop = trigger.pullback_leg_low - tick_buffer(trigger.pullback_leg_low, config)
 
     breakout_bar_stop = None
     gap_failure_stop = None
@@ -49,9 +49,9 @@ def compute_stops(
         # breakout bar's own Low) put the stop right next to the entry
         # (both are derived from breakout_level), producing a near-zero risk
         # and absurd reward/risk ratios for every breakout-only setup.
-        breakout_bar_stop = breakout_event.low * (1 - config.stop_buffer_pct)
+        breakout_bar_stop = breakout_event.low - tick_buffer(breakout_event.low, config)
         if breakout_event.true_gap_up and breakout_event.prior_high is not None:
-            gap_failure_stop = breakout_event.prior_high * (1 - config.stop_buffer_pct)
+            gap_failure_stop = breakout_event.prior_high - tick_buffer(breakout_event.prior_high, config)
 
     tight_stop = signal_bar_stop if signal_bar_stop is not None else breakout_bar_stop
     structural_stop = pullback_swing_stop if pullback_swing_stop is not None else breakout_bar_stop

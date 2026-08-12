@@ -48,7 +48,6 @@ class BrooksConfig:
     anchor_max_age_bdays: int = 15
     anchor_lookback_bars: int = 60
     pullback_max_bars: int = 8
-    signal_bar_break_buffer_pct: float = 0.0005
     max_state_resets: int = 1
 
     # state.py
@@ -61,8 +60,14 @@ class BrooksConfig:
     extended_atr_multiple: float = 3.0
     extended_ema20_distance_pct: float = 0.12
 
-    # stops_targets.py
-    stop_buffer_pct: float = 0.0005
+    # tick buffer (h1h2.py entries, stops_targets.py stops, brooks_screener.py
+    # Buy The Close entries) -- Brooks defines a tick literally (one cent for
+    # most US stocks, per SEC Rule 612), never as a percentage of price. Use a
+    # flat one-cent floor, scaling up for higher-priced names where a literal
+    # penny would be negligible relative to normal volatility. See
+    # tick_buffer() below.
+    min_tick_buffer: float = 0.01
+    tick_buffer_pct: float = 0.0005
 
     # scoring.py
     min_plausible_rr: float = 1.0
@@ -74,3 +79,10 @@ class BrooksConfig:
     weight_reward_risk: float = 0.15
     weight_liquidity: float = 0.10
     min_dollar_vol_for_full_liquidity: float = 50_000_000
+
+
+def tick_buffer(price: float, config: BrooksConfig) -> float:
+    """A "one tick above/below" buffer, per Brooks' literal per-instrument
+    tick definition rather than a pure percentage of price. Callers add this
+    for a buy-stop entry, subtract it for a stop below a reference low."""
+    return max(config.min_tick_buffer, price * config.tick_buffer_pct)

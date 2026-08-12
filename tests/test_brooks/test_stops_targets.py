@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 
 from brooks.breakout import BreakoutEvent
-from brooks.config import BrooksConfig
+from brooks.config import BrooksConfig, tick_buffer
 from brooks.h1h2 import TriggerEvent, H1H2State
 from brooks.stops_targets import compute_stops, compute_targets
 
@@ -29,8 +29,8 @@ def test_structural_stop_uses_pullback_leg_low_not_signal_bar_low():
 
     stops = compute_stops(h1h2_state, breakout_event=None, config=config)
 
-    assert stops.tight_stop == 100.0 * (1 - config.stop_buffer_pct)
-    assert stops.structural_stop == 97.0 * (1 - config.stop_buffer_pct)
+    assert stops.tight_stop == 100.0 - tick_buffer(100.0, config)
+    assert stops.structural_stop == 97.0 - tick_buffer(97.0, config)
     assert stops.structural_stop < stops.tight_stop
 
 
@@ -95,18 +95,21 @@ def test_breakout_bar_stop_uses_the_bars_actual_low_not_breakout_level():
 
     stops = compute_stops(h1h2_state=None, breakout_event=breakout_event, config=config)
 
-    assert stops.breakout_bar_stop == 95.0 * (1 - config.stop_buffer_pct)
+    assert stops.breakout_bar_stop == 95.0 - tick_buffer(95.0, config)
     assert stops.structural_stop == stops.breakout_bar_stop
     # the bug this guards against: stop must not be derived from
     # breakout_level, which sits right next to the entry (also derived from
     # breakout_level) and produces a near-zero, meaningless risk distance.
-    assert stops.breakout_bar_stop != 150.0 * (1 - config.stop_buffer_pct)
+    assert stops.breakout_bar_stop != 150.0 - tick_buffer(150.0, config)
 
 
 def test_breakout_only_setup_has_meaningful_risk_not_near_zero():
     config = BrooksConfig()
     breakout_event = _breakout_event(breakout_level=150.0, low=95.0)
-    entry = breakout_event.breakout_level * (1 + config.signal_bar_break_buffer_pct)
+    # a realistic entry near where price actually is (Buy The Close uses
+    # current price, not breakout_level -- this just needs any entry in that
+    # neighborhood to sanity-check compute_stops's own risk distance)
+    entry = 150.0 + tick_buffer(150.0, config)
 
     stops = compute_stops(h1h2_state=None, breakout_event=breakout_event, config=config)
     risk_pct = (entry - stops.structural_stop) / entry
@@ -120,4 +123,4 @@ def test_gap_failure_stop_uses_prior_bar_high_not_breakout_level():
 
     stops = compute_stops(h1h2_state=None, breakout_event=breakout_event, config=config)
 
-    assert stops.gap_failure_stop == 120.0 * (1 - config.stop_buffer_pct)
+    assert stops.gap_failure_stop == 120.0 - tick_buffer(120.0, config)

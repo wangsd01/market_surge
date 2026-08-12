@@ -95,3 +95,21 @@ def test_watchlist_buckets_partition_by_setup_state_and_gates():
     assert len(buckets["H2_WATCH"]) == 1
     assert len(buckets["EXTENDED_DO_NOT_CHASE"]) == 1
     assert len(buckets["FAILED_SETUP"]) == 1
+
+
+def test_triggered_recently_routes_to_wait_pullback_not_ready_now():
+    # proposed_entry for *_TRIGGERED_RECENTLY is fixed at the historical
+    # trigger price; for a working bullish setup price has typically moved
+    # above it since, so that price is no longer available and risk/reward
+    # computed against it would overstate what's actually achievable today.
+    df = pd.DataFrame(
+        [
+            _bucket_row("H1_TRIGGERED_RECENTLY", entry_quality_score=8.0, rr_target_1=3.0, trade_score=8.0),
+            _bucket_row("H2_TRIGGERED_RECENTLY", entry_quality_score=8.0, rr_target_1=3.0, trade_score=7.0),
+        ]
+    )
+
+    buckets = build_watchlist_buckets(df)
+
+    assert len(buckets["READY_NOW"]) == 0
+    assert len(buckets["WAIT_PULLBACK"]) == 2

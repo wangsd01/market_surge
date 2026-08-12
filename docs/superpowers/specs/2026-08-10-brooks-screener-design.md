@@ -125,7 +125,6 @@ so nothing is hard-coded inline. Defaults (all overridable):
 | `anchor_max_age_bdays` | 15 | h1h2 |
 | `anchor_lookback_bars` | 60 | h1h2 |
 | `pullback_max_bars` | 8 | h1h2 |
-| `signal_bar_break_buffer_pct` | 0.0005 | h1h2 / stops_targets |
 | `h1_stale_bdays` | 3 | state |
 | `h2_stale_bdays` | 4 | state |
 | `max_state_resets` | 1 | h1h2 |
@@ -133,7 +132,8 @@ so nothing is hard-coded inline. Defaults (all overridable):
 | `extended_atr_multiple` | 3.0 | extension |
 | `extended_ema20_distance_pct` | 0.12 | extension |
 | `breakout_pullback_max_age_bdays` | 5 | state |
-| `stop_buffer_pct` | 0.0005 | stops_targets |
+| `min_tick_buffer` | 0.01 | `tick_buffer()` (h1h2 entries, stops_targets stops, brooks_screener Buy The Close entries) |
+| `tick_buffer_pct` | 0.0005 | `tick_buffer()`, fallback for higher-priced stocks: `max(min_tick_buffer, price * tick_buffer_pct)` |
 | `min_plausible_rr` | 1.0 | scoring (penalize below this) |
 | `min_entry_quality_for_ready_now` | 5.0 | state / output (WAIT_FIRST_PULLBACK rule and READY_NOW bucket) |
 | `weight_market_context` | 0.25 | scoring |
@@ -247,7 +247,9 @@ Otherwise (or on that fallthrough), anchor = the **start** of the `anchor_lookba
 - In `in_pullback`: if `High[i] > High[i-1]`, a trigger fires. Signal bar = `i-1`; trigger bar = `i`. `trigger_count += 1`. `pullback_leg_low = min(Low[pullback_start_idx : i])` (used for the structural stop/failure check). If `trigger_count==1`, this is `H1`. If `trigger_count==2`, this is `H2` and the scan stops (v1 does not track H3+). After a trigger, state returns to `seeking_pullback` (comparisons resume against the trigger bar).
 - Scan ends at the last bar. If it ends in `in_pullback` with `trigger_count==0`, that's `H1_FORMING`; if `in_pullback` with `trigger_count==1`, that's `H2_FORMING`.
 
-`TriggerEvent` fields: `signal_date`, `trigger_date`, `trigger_price = signal_bar_high * (1+signal_bar_break_buffer_pct)`, `signal_bar_low`, `signal_bar_high`, `pullback_leg_low`.
+`TriggerEvent` fields: `signal_date`, `trigger_date`, `trigger_price = max(signal_bar_high + tick_buffer(signal_bar_high, config), trigger_bar_open)`, `signal_bar_low`, `signal_bar_high`, `pullback_leg_low`. The `max()` handles a gap through the stop: a buy-stop order placed one tick above `signal_bar_high` only fills there if the market actually trades up to it; if the trigger bar's own Open already exceeds that level, the order gapped through and the realistic fill is the Open (you cannot get filled at a price the market already gapped past before trading began). Without this, a gapping trigger bar would report an unrealistically low, unreachable entry price.
+
+`tick_buffer(price, config) = max(config.min_tick_buffer, price * config.tick_buffer_pct)`, defined in `brooks/config.py` and shared by every buffer computation in the package (H1/H2 trigger prices, all four stop types in `stops_targets.py`, and the Buy The Close entry in `brooks_screener.py`). Al Brooks defines a tick literally and per-instrument — "one tick above the high of the signal bar," with a tick being one cent for most US stocks — never as a percentage of price (verified against his own course material, see `docs/research/al-brooks-entry-conventions.md`). A pure percentage buffer is *narrower* than a real penny tick on cheap stocks and can be `10x+` a penny on higher-priced names; `tick_buffer()`'s flat one-cent floor with a small-percentage fallback for higher-priced stocks stays close to Brooks' literal definition across a stock universe spanning many price levels (unlike his usual single-instrument futures context, where tick size is fixed).
 
 **Failure check** (`check_failure(trigger, latest_idx)`), applied independently to `h1` and `h2`: `window = df.iloc[trigger_idx+1 : latest_idx+1]` where `trigger_idx` is the trigger bar's index; `False, False` if empty. `tight_stop_failure = (window.Low < trigger.signal_bar_low).any()`. `structural_failure = (window.Low < trigger.pullback_leg_low).any()`. `strong_structural_failure = ((window.Close < trigger.pullback_leg_low) & (window.Close < window.Open)).any()`. `failed = tight_stop_failure or structural_failure or strong_structural_failure`.
 
@@ -268,7 +270,7 @@ Returns `ExtensionResult(is_extended, reason)` where `reason` names which condit
 
 ## `stops_targets.py`
 
-`compute_stops(h1h2_state, breakout_event) -> StopSet`: `signal_bar_stop = trigger.signal_bar_low - buffer`, `pullback_swing_stop = trigger.pullback_leg_low - buffer`, `breakout_bar_stop = breakout_event.low - buffer` (if a breakout exists) -- **`breakout_event.low` is the breakout bar's own traded Low price, not `breakout_event.breakout_level`** (the resistance price level that got cleared). Those are two different numbers; `breakout_level` sits close to `proposed_entry` (which is itself derived from `breakout_level`), so using it as a stop produces a near-zero, meaningless risk distance and absurd reward/risk ratios -- this is exactly the bug found in practice (every breakout-only `READY_NOW` row showing `risk_pct == 0.001` and `rr_target_1` in the tens-to-hundreds). `gap_failure_stop = breakout_event.prior_high - buffer` (if `true_gap_up` and `prior_high` is available) -- `prior_high` is the High of the bar immediately before the breakout bar, i.e. the top of the gap zone, also a field on `BreakoutEvent`, also distinct from `breakout_level`.
+`compute_stops(h1h2_state, breakout_event) -> StopSet`: `signal_bar_stop = trigger.signal_bar_low - tick_buffer(...)`, `pullback_swing_stop = trigger.pullback_leg_low - tick_buffer(...)`, `breakout_bar_stop = breakout_event.low - tick_buffer(...)` (if a breakout exists) -- **`breakout_event.low` is the breakout bar's own traded Low price, not `breakout_event.breakout_level`** (the resistance price level that got cleared). Those are two different numbers; `breakout_level` sits close to `proposed_entry` (which used to also be derived from `breakout_level`, before the Buy The Close fix below), so using it as a stop produces a near-zero, meaningless risk distance and absurd reward/risk ratios -- this is exactly the bug found in practice (every breakout-only `READY_NOW` row showing `risk_pct == 0.001` and `rr_target_1` in the tens-to-hundreds). `gap_failure_stop = breakout_event.prior_high - tick_buffer(...)` (if `true_gap_up` and `prior_high` is available) -- `prior_high` is the High of the bar immediately before the breakout bar, i.e. the top of the gap zone, also a field on `BreakoutEvent`, also distinct from `breakout_level`. Every `tick_buffer(...)` call above is `tick_buffer(<that price>, config)` per the shared helper defined in `brooks/config.py` (see the `h1h2.py` section above).
 
 `tight_stop = signal_bar_stop if a trigger exists, else breakout_bar_stop`. `structural_stop = pullback_swing_stop if a trigger exists, else breakout_bar_stop` (preferred stop per the requirements — "prefer the structural stop when determining whether the setup remains logically valid"). Both fall back to `breakout_bar_stop` specifically so a `STRONG_BREAKOUT`/`STRONG_BREAKOUT_FOLLOW_THROUGH` row (no H1/H2 trigger yet) still gets a real, chart-derived stop rather than `None`.
 
@@ -332,8 +334,8 @@ setup_quality_score, entry_quality_score, trade_score, reason, warning).
 stop distance) — same pattern as `strategies.summary_reason`.
 
 `build_watchlist_buckets(df) -> dict[str, pd.DataFrame]`:
-- `READY_NOW`: `setup_state in {STRONG_BREAKOUT, STRONG_BREAKOUT_FOLLOW_THROUGH, H1_TRIGGERED_TODAY, H1_TRIGGERED_RECENTLY, H2_TRIGGERED_TODAY, H2_TRIGGERED_RECENTLY, BREAKOUT_PULLBACK}` and `entry_quality_score >= 5.0` and `rr_target_1 >= min_plausible_rr`
-- `WAIT_PULLBACK`: `setup_state == WAIT_FIRST_PULLBACK`
+- `READY_NOW`: `setup_state in {STRONG_BREAKOUT, STRONG_BREAKOUT_FOLLOW_THROUGH, H1_TRIGGERED_TODAY, H2_TRIGGERED_TODAY, BREAKOUT_PULLBACK}` and `entry_quality_score >= 5.0` and `rr_target_1 >= min_plausible_rr`. **`*_TRIGGERED_RECENTLY` is deliberately excluded** — `proposed_entry` for those rows is fixed at the historical trigger price (`signal_bar_high * (1+buffer)` at the moment H1/H2 fired), and for a working bullish setup price has typically moved above it in the days since, so that price is no longer available; `risk_pct`/`rr_target_1` computed against it would overstate what's actually achievable placing the order today. Confirmed empirically against real data: every `*_TRIGGERED_RECENTLY` row showed `proposed_entry` 0.2%-5% below the ticker's actual current price.
+- `WAIT_PULLBACK`: `setup_state in {WAIT_FIRST_PULLBACK, H1_TRIGGERED_RECENTLY, H2_TRIGGERED_RECENTLY}` — "strong stock, poor current entry" already described exactly what a stale-entry recently-triggered setup is; no new bucket needed.
 - `H1_WATCH`: `setup_state == H1_FORMING`
 - `H2_WATCH`: `setup_state == H2_FORMING`
 - `STRONG_FOLLOW_THROUGH`: `setup_state in {STRONG_BREAKOUT, STRONG_BREAKOUT_FOLLOW_THROUGH}`
@@ -341,6 +343,12 @@ stop distance) — same pattern as `strategies.summary_reason`.
 - `FAILED_SETUP`: `setup_state in {FAILED_H1, FAILED_H2}`
 
 Each bucket sorted by `trade_score` descending.
+
+### Entry resolution (`_resolve_entry`, in `brooks_screener.py`)
+
+`proposed_entry` is resolved in priority order: `h2.trigger_price` if H2 triggered, else `h1.trigger_price` if H1 triggered, else — for a breakout-only state with no pullback yet (`STRONG_BREAKOUT`/`STRONG_BREAKOUT_FOLLOW_THROUGH`) — **Al Brooks' "Buy The Close"**: `current_price + tick_buffer(current_price, config)`, not a stop-buy above `breakout_level`. Buy The Close is a specific, named Brooks technique — buying at (or just above) the close of a strong trend bar, explicitly framed as the alternative to waiting for a pullback (verified against his own course material, see `docs/research/al-brooks-entry-conventions.md`) — distinct from a resistance-level breakout-buy, which happened to produce numerically similar-looking entries in most cases but is a different mechanic and, per the stops_targets.py note above, was also the source of the near-zero-risk bug. Falls back to `current_price` with no buffer if neither a trigger nor a breakout exists (nothing to describe).
+
+*_TRIGGERED_RECENTLY* rows (H1/H2 fired 1+ days ago, not today) keep `trigger_price` as the historical fill — deliberately **not** re-based to current price — since `READY_NOW` already excludes them (see the bucket definition above); `entry_pct` there describes what happened, not a still-open order.
 
 ## CLI (`brooks_screener.py`)
 

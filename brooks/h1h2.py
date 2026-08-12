@@ -6,7 +6,7 @@ from datetime import date
 import pandas as pd
 
 from brooks.breakout import BreakoutEvent
-from brooks.config import BrooksConfig
+from brooks.config import BrooksConfig, tick_buffer
 
 
 @dataclass
@@ -75,6 +75,7 @@ def scan_from_anchor(df: pd.DataFrame, anchor_idx: int, config: BrooksConfig) ->
     n = len(df)
     highs = df["High"].to_numpy()
     lows = df["Low"].to_numpy()
+    opens = df["Open"].to_numpy()
 
     state = "seeking_pullback"
     pullback_start_idx: int | None = None
@@ -97,10 +98,19 @@ def scan_from_anchor(df: pd.DataFrame, anchor_idx: int, config: BrooksConfig) ->
             trigger_idx = i
             trigger_count += 1
             pullback_leg_low = float(lows[pullback_start_idx : i].min())
+            # A stop-buy order set at the signal bar's high (plus buffer) only
+            # fills there if the market actually trades up to it. If the
+            # trigger bar *opened* above that level (a gap through the stop),
+            # the realistic fill is the open -- you cannot get a better price
+            # than the market already gapped past before trading began.
+            signal_bar_high = float(highs[signal_idx])
+            naive_trigger_price = signal_bar_high + tick_buffer(signal_bar_high, config)
+            trigger_open = float(opens[trigger_idx])
+            trigger_price = max(naive_trigger_price, trigger_open)
             trigger = TriggerEvent(
                 signal_date=df.index[signal_idx].date(),
                 trigger_date=df.index[trigger_idx].date(),
-                trigger_price=float(highs[signal_idx]) * (1 + config.signal_bar_break_buffer_pct),
+                trigger_price=trigger_price,
                 signal_bar_low=float(lows[signal_idx]),
                 signal_bar_high=float(highs[signal_idx]),
                 pullback_leg_low=pullback_leg_low,

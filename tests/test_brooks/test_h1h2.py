@@ -1,7 +1,7 @@
 import pandas as pd
 
 from brooks.breakout import BreakoutEvent
-from brooks.config import BrooksConfig
+from brooks.config import BrooksConfig, tick_buffer
 from brooks.h1h2 import scan_from_anchor, compute_h1h2_state, find_anchor
 
 
@@ -12,7 +12,7 @@ def _ohlcv(rows: list[dict]) -> pd.DataFrame:
 
 def _df_from_highs_lows(highs: list[float], lows: list[float]) -> pd.DataFrame:
     dates = pd.date_range("2025-01-01", periods=len(highs), freq="B")
-    opens = lows  # irrelevant to the state machine, which only reads High/Low
+    opens = lows  # kept below every bar's High so it never triggers the gap-through fill logic
     closes = [(h + l) / 2 for h, l in zip(highs, lows)]
     return pd.DataFrame(
         {"Open": opens, "High": highs, "Low": lows, "Close": closes, "Volume": [1_000_000] * len(highs)},
@@ -39,7 +39,7 @@ def test_worked_example_h1_then_h2_not_h1_continuation():
     assert state.h1 is not None
     assert state.h1.signal_date == df.index[2].date()  # C
     assert state.h1.trigger_date == df.index[3].date()  # D
-    assert state.h1.trigger_price == df["High"].iloc[2] * (1 + config.signal_bar_break_buffer_pct)
+    assert state.h1.trigger_price == df["High"].iloc[2] + tick_buffer(df["High"].iloc[2], config)
 
     assert state.h2 is not None
     assert state.h2.signal_date == df.index[5].date()  # F
@@ -127,3 +127,43 @@ def test_find_anchor_falls_back_to_lookback_window_start_without_breakout():
     # coincide here) picked by argmax/argmin -- the start of the lookback
     # window, which scan_from_anchor can always walk forward from safely.
     assert anchor_idx == 0
+
+
+def test_trigger_price_uses_signal_bar_high_when_no_gap():
+    # C (idx2, high=95) is the H1 signal bar; D (idx3) triggers with a normal
+    # open below the naive stop level (95 * 1.0005) -- the ordinary case.
+    rows = [
+        {"Open": 99, "High": 100, "Low": 95, "Close": 99.5, "Volume": 1_000_000},  # A
+        {"Open": 99.5, "High": 97, "Low": 92, "Close": 93, "Volume": 1_000_000},  # B
+        {"Open": 93, "High": 95, "Low": 90, "Close": 91, "Volume": 1_000_000},  # C (signal)
+        {"Open": 91, "High": 96, "Low": 91, "Close": 95.5, "Volume": 1_000_000},  # D (trigger, opens well below 95.0475)
+    ]
+    df = _ohlcv(rows)
+    config = BrooksConfig()
+
+    state = scan_from_anchor(df, anchor_idx=0, config=config)
+
+    assert state.h1 is not None
+    assert state.h1.trigger_price == 95.0 + tick_buffer(95.0, config)
+
+
+def test_trigger_price_uses_open_when_gapped_through_the_stop():
+    # Same C signal bar (high=95), but D gaps open at 98 -- well above the
+    # naive stop level (95.0475). A real stop-buy order would already have
+    # been triggered by the gap and fills at (or near) the open, not at the
+    # unreachable original stop price.
+    rows = [
+        {"Open": 99, "High": 100, "Low": 95, "Close": 99.5, "Volume": 1_000_000},  # A
+        {"Open": 99.5, "High": 97, "Low": 92, "Close": 93, "Volume": 1_000_000},  # B
+        {"Open": 93, "High": 95, "Low": 90, "Close": 91, "Volume": 1_000_000},  # C (signal)
+        {"Open": 98, "High": 99, "Low": 97.5, "Close": 98.5, "Volume": 1_000_000},  # D (gaps through the stop)
+    ]
+    df = _ohlcv(rows)
+    config = BrooksConfig()
+
+    state = scan_from_anchor(df, anchor_idx=0, config=config)
+
+    assert state.h1 is not None
+    naive_stop = 95.0 + tick_buffer(95.0, config)
+    assert state.h1.trigger_price == 98.0
+    assert state.h1.trigger_price > naive_stop

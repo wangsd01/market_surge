@@ -8,7 +8,7 @@ from pathlib import Path
 import pandas as pd
 
 from brooks.breakout import find_latest_breakout, follow_through
-from brooks.config import BrooksConfig
+from brooks.config import BrooksConfig, tick_buffer
 from brooks.extension import is_extended
 from brooks.features import compute_features
 from brooks.h1h2 import compute_h1h2_state
@@ -32,7 +32,13 @@ def _resolve_entry(h1h2_state, breakout_event, current_price: float, config: Bro
     if h1h2_state is not None and h1h2_state.h1 is not None:
         return h1h2_state.h1.trigger_price
     if breakout_event is not None:
-        return breakout_event.breakout_level * (1 + config.signal_bar_break_buffer_pct)
+        # Al Brooks' "Buy The Close": for a strong continuation with no
+        # pullback yet, entry is at (or just above) the latest strong bar's
+        # close, not a stop-buy above the resistance level that was cleared
+        # several bars ago at the original breakout -- that's a different
+        # (and non-Brooks) mechanic that happened to be close in practice but
+        # isn't the actual named technique for this situation.
+        return current_price + tick_buffer(current_price, config)
     return current_price
 
 

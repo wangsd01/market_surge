@@ -56,11 +56,17 @@ _READY_NOW_STATES = {
     "STRONG_BREAKOUT",
     "STRONG_BREAKOUT_FOLLOW_THROUGH",
     "H1_TRIGGERED_TODAY",
-    "H1_TRIGGERED_RECENTLY",
     "H2_TRIGGERED_TODAY",
-    "H2_TRIGGERED_RECENTLY",
     "BREAKOUT_PULLBACK",
 }
+# *_TRIGGERED_RECENTLY (fired 1+ days ago, not today) is deliberately excluded
+# from READY_NOW: proposed_entry is fixed at the historical trigger price, and
+# for a working bullish setup price has typically since moved above it -- that
+# price is no longer available, so risk_pct/rr_target_1 computed against it
+# overstate what you'd actually get placing the order today. These route to
+# WAIT_PULLBACK instead ("strong stock, poor current entry") rather than
+# implying a still-open entry.
+_WAIT_PULLBACK_STATES = {"WAIT_FIRST_PULLBACK", "H1_TRIGGERED_RECENTLY", "H2_TRIGGERED_RECENTLY"}
 _STRONG_FOLLOW_THROUGH_STATES = {"STRONG_BREAKOUT", "STRONG_BREAKOUT_FOLLOW_THROUGH"}
 _EXTENDED_STATES = {"EXTENDED_AFTER_BREAKOUT", "EXTENDED_AFTER_H2"}
 _FAILED_STATES = {"FAILED_H1", "FAILED_H2"}
@@ -191,7 +197,7 @@ def build_watchlist_buckets(df: pd.DataFrame, config: BrooksConfig | None = None
 
     return {
         "READY_NOW": _sorted(ready_now_mask),
-        "WAIT_PULLBACK": _sorted(df["setup_state"] == "WAIT_FIRST_PULLBACK"),
+        "WAIT_PULLBACK": _sorted(df["setup_state"].isin(_WAIT_PULLBACK_STATES)),
         "H1_WATCH": _sorted(df["setup_state"] == "H1_FORMING"),
         "H2_WATCH": _sorted(df["setup_state"] == "H2_FORMING"),
         "STRONG_FOLLOW_THROUGH": _sorted(df["setup_state"].isin(_STRONG_FOLLOW_THROUGH_STATES)),
