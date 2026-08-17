@@ -509,7 +509,11 @@ def delete_invalid_tickers(conn: sqlite3.Connection, tickers: list[str], source:
         )
 
 
-def get_ticker_metadata(conn: sqlite3.Connection, tickers: list[str]) -> dict[str, dict[str, str]]:
+def get_ticker_metadata(
+    conn: sqlite3.Connection,
+    tickers: list[str],
+    max_age_days: float | None = None,
+) -> dict[str, dict[str, str]]:
     normalized = [str(ticker).strip().upper() for ticker in tickers if str(ticker).strip()]
     if not normalized:
         return {}
@@ -517,20 +521,26 @@ def get_ticker_metadata(conn: sqlite3.Connection, tickers: list[str]) -> dict[st
     placeholders = ",".join("?" for _ in normalized)
     rows = conn.execute(
         f"""
-        SELECT ticker, sector, industry, fifty_two_week_high
+        SELECT ticker, sector, industry, fifty_two_week_high, updated_at
         FROM ticker_metadata
         WHERE ticker IN ({placeholders})
         """,
         normalized,
     ).fetchall()
-    return {
-        str(ticker).upper(): {
+
+    cutoff = datetime.now(UTC) - timedelta(days=max_age_days) if max_age_days is not None else None
+    out = {}
+    for ticker, sector, industry, h52, updated_at in rows:
+        if cutoff is not None:
+            updated = datetime.fromisoformat(updated_at).replace(tzinfo=UTC)
+            if updated < cutoff:
+                continue
+        out[str(ticker).upper()] = {
             "sector": "" if sector is None else str(sector),
             "industry": "" if industry is None else str(industry),
             "fifty_two_week_high": None if h52 is None else float(h52),
         }
-        for ticker, sector, industry, h52 in rows
-    }
+    return out
 
 
 def save_ticker_metadata(conn: sqlite3.Connection, metadata_by_ticker: dict[str, dict[str, str]]) -> None:

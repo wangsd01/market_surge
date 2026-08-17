@@ -36,6 +36,7 @@ ALLOWED_EXCHANGES = {"NASDAQ", "NYSE", "CBOE"}
 BIOTECH_SECTION = "Biotechnology"
 DEFAULT_SECTION = "Other"
 DEFAULT_INDUSTRY = ""
+TICKER_METADATA_MAX_AGE_DAYS = 1
 _BIOTECH_KEYWORDS = (
     "THERAPEUTICS",
     "BIOTECH",
@@ -274,7 +275,11 @@ def get_ticker_metadata(
 
     conn = init_db(db_path)
     try:
-        cached = {} if refresh else get_cached_ticker_metadata(conn, normalized)
+        cached = (
+            {}
+            if refresh
+            else get_cached_ticker_metadata(conn, normalized, max_age_days=TICKER_METADATA_MAX_AGE_DAYS)
+        )
         missing = [ticker for ticker in normalized if ticker not in cached]
         fetched: dict[str, dict[str, str]] = {}
         failed: list[str] = []
