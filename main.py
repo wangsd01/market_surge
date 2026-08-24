@@ -37,7 +37,7 @@ from screener import (
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Decision Ticket CLI")
     parser.add_argument("--low-start", default="2026-03-30")
-    parser.add_argument("--low-end", default="2026-04-22")
+    parser.add_argument("--low-end", default="2026-04-30")
     parser.add_argument("--min-price", type=float, default=5.0)
     parser.add_argument("--min-dollar-vol", type=float, default=50_000_000)
     parser.add_argument("--min-pct-of-52wk-high", type=float, default=0.70)

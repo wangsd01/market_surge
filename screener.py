@@ -27,8 +27,10 @@ PATTERN_LOOKBACK_DAYS = 180
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Stock bounce screener")
-    parser.add_argument("--low-start", default="2026-03-30")
-    parser.add_argument("--low-end", default="2026-04-12")
+    # parser.add_argument("--low-start", default="2026-03-30")
+    # parser.add_argument("--low-end", default="2026-04-12")
+    parser.add_argument("--low-start", default="2026-06-30")
+    parser.add_argument("--low-end", default="2026-07-31")
     parser.add_argument("--min-price", type=float, default=5.0)
     parser.add_argument("--min-dollar-vol", type=float, default=50_000_000)
     parser.add_argument("--top", type=int, default=20)
