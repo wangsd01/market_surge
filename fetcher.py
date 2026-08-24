@@ -17,6 +17,7 @@ from db import (
     delete_price_history_for_date,
     delete_invalid_tickers,
     get_cached_price_history,
+    get_fifty_two_week_high,
     get_invalid_tickers,
     get_tickers_with_cached_coverage,
     get_ticker_metadata as get_cached_ticker_metadata,
@@ -36,7 +37,6 @@ ALLOWED_EXCHANGES = {"NASDAQ", "NYSE", "CBOE"}
 BIOTECH_SECTION = "Biotechnology"
 DEFAULT_SECTION = "Other"
 DEFAULT_INDUSTRY = ""
-TICKER_METADATA_MAX_AGE_DAYS = 1
 _BIOTECH_KEYWORDS = (
     "THERAPEUTICS",
     "BIOTECH",
@@ -254,9 +254,7 @@ def _extract_ticker_metadata_from_info(info: dict[str, object] | None) -> dict[s
         or _clean(payload.get("category"))
         or _clean(payload.get("fundFamily"))
     )
-    raw_h52 = payload.get("fiftyTwoWeekHigh")
-    fifty_two_week_high = float(raw_h52) if raw_h52 is not None else None
-    return {"sector": sector, "industry": industry, "fifty_two_week_high": fifty_two_week_high}
+    return {"sector": sector, "industry": industry}
 
 
 def _fetch_ticker_metadata_for_ticker(ticker: str) -> tuple[str, dict[str, str]]:
@@ -275,11 +273,9 @@ def get_ticker_metadata(
 
     conn = init_db(db_path)
     try:
-        cached = (
-            {}
-            if refresh
-            else get_cached_ticker_metadata(conn, normalized, max_age_days=TICKER_METADATA_MAX_AGE_DAYS)
-        )
+        # Sector/industry rarely change, so a cached row is reused regardless of
+        # age -- only tickers we've never fetched before hit Yahoo.
+        cached = {} if refresh else get_cached_ticker_metadata(conn, normalized)
         missing = [ticker for ticker in normalized if ticker not in cached]
         fetched: dict[str, dict[str, str]] = {}
         failed: list[str] = []
@@ -307,6 +303,15 @@ def get_ticker_metadata(
             )
         out = dict(cached)
         out.update(fetched)
+
+        # 52-week high changes daily, unlike sector/industry, so it's computed
+        # fresh every call from cached daily bars instead of Yahoo's summary
+        # endpoint -- no network call, no staleness, no rate limit risk.
+        high_by_ticker = get_fifty_two_week_high(
+            conn, list(out.keys()), as_of_date=_today_market_date().isoformat()
+        )
+        for ticker in out:
+            out[ticker]["fifty_two_week_high"] = high_by_ticker.get(ticker)
         return out
     finally:
         conn.close()

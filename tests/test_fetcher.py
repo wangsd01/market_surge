@@ -1,12 +1,17 @@
 import logging
-from datetime import datetime
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 import pandas as pd
 import pytest
 
 import fetcher
-from db import get_ticker_metadata as get_cached_ticker_metadata, init_db, save_ticker_metadata
+from db import (
+    get_ticker_metadata as get_cached_ticker_metadata,
+    init_db,
+    save_price_history,
+    save_ticker_metadata,
+)
 from fetcher import (
     BIOTECH_SECTION,
     DEFAULT_SECTION,
@@ -205,7 +210,7 @@ def test_extract_ticker_metadata_from_equity_info():
         }
     )
 
-    assert metadata == {"sector": "Technology", "industry": "Semiconductors", "fifty_two_week_high": None}
+    assert metadata == {"sector": "Technology", "industry": "Semiconductors"}
 
 
 def test_extract_ticker_metadata_from_etf_info_uses_type_and_category():
@@ -218,7 +223,7 @@ def test_extract_ticker_metadata_from_etf_info_uses_type_and_category():
         }
     )
 
-    assert metadata == {"sector": "ETF", "industry": "Trading--Leveraged Equity", "fifty_two_week_high": None}
+    assert metadata == {"sector": "ETF", "industry": "Trading--Leveraged Equity"}
 
 
 def test_get_ticker_metadata_reuses_cached_null_high(tmp_path, monkeypatch):
@@ -248,11 +253,7 @@ def test_get_ticker_metadata_reuses_cached_null_high(tmp_path, monkeypatch):
 
 def test_get_ticker_metadata_saves_successes_and_warns_on_failures(tmp_path, monkeypatch, caplog):
     db_path = tmp_path / "metadata.db"
-    good = {
-        "sector": "Technology",
-        "industry": "Semiconductors",
-        "fifty_two_week_high": 150.0,
-    }
+    good = {"sector": "Technology", "industry": "Semiconductors"}
 
     def fetch(ticker):
         if ticker in {"ZZZ", "AAA"}:
@@ -264,34 +265,21 @@ def test_get_ticker_metadata_saves_successes_and_warns_on_failures(tmp_path, mon
     with caplog.at_level(logging.WARNING, logger="fetcher"):
         result = get_ticker_metadata(["ZZZ", "GOOD", "AAA"], db_path=db_path)
 
-    assert result == {"GOOD": good}
+    assert result == {"GOOD": {**good, "fifty_two_week_high": None}}
     assert caplog.messages == ["Yahoo metadata unavailable for 2 tickers: AAA, ZZZ"]
 
     conn = init_db(db_path)
     persisted = get_cached_ticker_metadata(conn, ["GOOD", "AAA", "ZZZ"])
     conn.close()
-    assert persisted == {"GOOD": good}
+    assert persisted == {"GOOD": {**good, "fifty_two_week_high": None}}
 
 
 def test_get_ticker_metadata_refreshes_cached_ticker(tmp_path, monkeypatch):
     db_path = tmp_path / "metadata.db"
     conn = init_db(db_path)
-    save_ticker_metadata(
-        conn,
-        {
-            "AAA": {
-                "sector": "Old",
-                "industry": "Old",
-                "fifty_two_week_high": None,
-            }
-        },
-    )
+    save_ticker_metadata(conn, {"AAA": {"sector": "Old", "industry": "Old"}})
     conn.close()
-    refreshed = {
-        "sector": "Technology",
-        "industry": "Software",
-        "fifty_two_week_high": 200.0,
-    }
+    refreshed = {"sector": "Technology", "industry": "Software"}
     calls = []
 
     def fetch(ticker):
@@ -303,22 +291,13 @@ def test_get_ticker_metadata_refreshes_cached_ticker(tmp_path, monkeypatch):
     result = get_ticker_metadata(["AAA"], db_path=db_path, refresh=True)
 
     assert calls == ["AAA"]
-    assert result == {"AAA": refreshed}
+    assert result == {"AAA": {**refreshed, "fifty_two_week_high": None}}
 
 
-def test_get_ticker_metadata_refetches_stale_cache_entry(tmp_path, monkeypatch):
+def test_get_ticker_metadata_reuses_old_cached_sector_without_refetch(tmp_path, monkeypatch):
     db_path = tmp_path / "metadata.db"
     conn = init_db(db_path)
-    save_ticker_metadata(
-        conn,
-        {
-            "AAA": {
-                "sector": "Technology",
-                "industry": "Software",
-                "fifty_two_week_high": 100.0,
-            }
-        },
-    )
+    save_ticker_metadata(conn, {"AAA": {"sector": "Technology", "industry": "Software"}})
     conn.execute(
         "UPDATE ticker_metadata SET updated_at = ? WHERE ticker = ?",
         ("2020-01-01 00:00:00+00:00", "AAA"),
@@ -326,23 +305,45 @@ def test_get_ticker_metadata_refetches_stale_cache_entry(tmp_path, monkeypatch):
     conn.commit()
     conn.close()
 
-    refreshed = {
-        "sector": "Technology",
-        "industry": "Software",
-        "fifty_two_week_high": 200.0,
-    }
-    calls = []
+    def unexpected_fetch(_ticker):
+        raise AssertionError("sector/industry never expires, so this should not be called")
 
-    def fetch(ticker):
-        calls.append(ticker)
-        return ticker, refreshed
-
-    monkeypatch.setattr("fetcher._fetch_ticker_metadata_for_ticker", fetch)
+    monkeypatch.setattr("fetcher._fetch_ticker_metadata_for_ticker", unexpected_fetch)
 
     result = get_ticker_metadata(["AAA"], db_path=db_path)
 
-    assert calls == ["AAA"]
-    assert result == {"AAA": refreshed}
+    assert result == {"AAA": {"sector": "Technology", "industry": "Software", "fifty_two_week_high": None}}
+
+
+def test_get_ticker_metadata_computes_fifty_two_week_high_from_price_history(tmp_path, monkeypatch):
+    db_path = tmp_path / "metadata.db"
+    conn = init_db(db_path)
+    save_ticker_metadata(conn, {"AAA": {"sector": "Technology", "industry": "Software"}})
+    save_price_history(
+        conn,
+        pd.DataFrame(
+            {
+                "Date": ["2026-01-10", "2026-06-15", "2024-01-01"],
+                "Ticker": ["AAA", "AAA", "AAA"],
+                "Open": [10.0, 20.0, 999.0],
+                "High": [10.0, 25.0, 999.0],
+                "Low": [9.0, 19.0, 998.0],
+                "Close": [9.5, 24.0, 998.5],
+                "Volume": [1000, 2000, 3000],
+            }
+        ),
+    )
+    conn.close()
+
+    def unexpected_fetch(_ticker):
+        raise AssertionError("cached sector/industry should not trigger a Yahoo fetch")
+
+    monkeypatch.setattr("fetcher._fetch_ticker_metadata_for_ticker", unexpected_fetch)
+    monkeypatch.setattr("fetcher._today_market_date", lambda: date(2026, 8, 24))
+
+    result = get_ticker_metadata(["AAA"], db_path=db_path)
+
+    assert result == {"AAA": {"sector": "Technology", "industry": "Software", "fifty_two_week_high": 25.0}}
 
 
 def test_get_sp500_tickers_cached_only_reads_local_cache(tmp_path):

@@ -368,6 +368,36 @@ def get_cached_price_history(
     return df
 
 
+def get_fifty_two_week_high(
+    conn: sqlite3.Connection,
+    tickers: list[str],
+    as_of_date: str,
+    lookback_days: int = 365,
+) -> dict[str, float]:
+    """Max daily High per ticker over the trailing `lookback_days`, computed from
+    already-cached raw_price_history (indexed on (ticker, date)) — no network calls.
+    """
+    normalized = [str(ticker).strip().upper() for ticker in tickers if str(ticker).strip()]
+    if not normalized:
+        return {}
+
+    cutoff = (datetime.fromisoformat(as_of_date) - timedelta(days=lookback_days)).date().isoformat()
+    placeholders = ",".join("?" for _ in normalized)
+    rows = conn.execute(
+        f"""
+        SELECT ticker, MAX(high)
+        FROM raw_price_history
+        WHERE ticker IN ({placeholders})
+          AND date >= ?
+          AND date <= ?
+          AND high IS NOT NULL
+        GROUP BY ticker
+        """,
+        [*normalized, cutoff, as_of_date],
+    ).fetchall()
+    return {str(ticker).upper(): float(high) for ticker, high in rows}
+
+
 def _expected_cache_dates(low_start: str, end_date: str) -> set[str]:
     start_ts = pd.to_datetime(low_start)
     end_ts = pd.to_datetime(end_date)

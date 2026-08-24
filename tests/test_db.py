@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from db import get_invalid_tickers, init_db, save_invalid_tickers
+from db import get_fifty_two_week_high, get_invalid_tickers, init_db, save_invalid_tickers
 
 
 @pytest.fixture
@@ -58,3 +58,45 @@ def test_get_invalid_tickers_respects_source_filter(conn):
 
     assert "AAPL" in result
     assert len(result) == 1
+
+
+def _insert_bar(conn: sqlite3.Connection, ticker: str, date_str: str, high: float) -> None:
+    with conn:
+        conn.execute(
+            "INSERT INTO raw_price_history (date, ticker, open, high, low, close, volume) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (date_str, ticker, high, high, high, high, 1_000_000),
+        )
+
+
+def test_get_fifty_two_week_high_returns_max_high_within_window(conn):
+    _insert_bar(conn, "AAA", "2026-01-10", 10.0)
+    _insert_bar(conn, "AAA", "2026-06-15", 25.0)
+
+    result = get_fifty_two_week_high(conn, ["AAA"], as_of_date="2026-08-24")
+
+    assert result == {"AAA": 25.0}
+
+
+def test_get_fifty_two_week_high_excludes_bars_older_than_lookback(conn):
+    _insert_bar(conn, "AAA", "2026-06-15", 25.0)
+    _insert_bar(conn, "AAA", "2024-01-01", 999.0)
+
+    result = get_fifty_two_week_high(conn, ["AAA"], as_of_date="2026-08-24")
+
+    assert result == {"AAA": 25.0}
+
+
+def test_get_fifty_two_week_high_only_returns_requested_tickers(conn):
+    _insert_bar(conn, "AAA", "2026-06-15", 25.0)
+    _insert_bar(conn, "BBB", "2026-06-15", 999.0)
+
+    result = get_fifty_two_week_high(conn, ["AAA"], as_of_date="2026-08-24")
+
+    assert result == {"AAA": 25.0}
+
+
+def test_get_fifty_two_week_high_returns_empty_for_ticker_with_no_history(conn):
+    result = get_fifty_two_week_high(conn, ["NOPE"], as_of_date="2026-08-24")
+
+    assert result == {}
